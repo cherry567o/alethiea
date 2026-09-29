@@ -213,26 +213,19 @@ def new_id():
     return "ME-" + secrets.token_hex(3).upper()
 
 
-def _paise_for_id(reg_id: str) -> int:
-    """Stable 1–97 paise derived from the ticket id — makes every payment amount
-    globally unique (₹69.37 vs ₹69.52…) so webhook matching never needs names,
-    which collide (thousands of 'Rahul Sharma's exist on UPI). Names are for
-    display only; UTR remains the idempotency key."""
-    return int(hashlib.sha256(reg_id.encode()).hexdigest()[:6], 16) % 97 + 1
-
-
-def pay_amount(reg: dict) -> str:
-    """Exact payable amount with unique paise, e.g. '69.37'."""
-    return f"{reg['expectedAmount']}.{_paise_for_id(reg['id']):02d}"
+# NOTE: we deliberately keep the advertised price EXACT (₹69.00 — no odd paise) so
+# guests are never asked for a different amount than advertised. Auto-accept only
+# fires when the paid amount is unambiguous (exactly one pending booking at that
+# amount); ties fall back to one-click manual approval in the admin panel.
 
 
 def upi_payment_uri(reg: dict) -> str:
-    """Standard UPI deep link — scanning opens GPay/PhonePe/Paytm with the UNIQUE
-    amount pre-filled (base + ticket-specific paise)."""
+    """Standard UPI deep link — scanning opens GPay/PhonePe/Paytm with the
+    advertised amount pre-filled."""
     params = {
         "pa": UPI_ID,
         "pn": "Aletheia",
-        "am": pay_amount(reg),
+        "am": str(reg["expectedAmount"]),
         "cu": "INR",
         "tn": f"Ticket {reg['id']} {reg['name']}",
     }
@@ -547,8 +540,7 @@ def api_register():
         })
         _save(DB)
         return jsonify({**reg, "qrDataUrl": make_qr(upi_payment_uri(reg)),
-                        "upiUri": upi_payment_uri(reg), "upiId": UPI_ID,
-                        "exactAmount": pay_amount(reg), "demoMode": False})
+                        "upiUri": upi_payment_uri(reg), "upiId": UPI_ID, "demoMode": False})
 
     if RZP_READY:
         try:
@@ -738,14 +730,13 @@ def api_upi_webhook():
         if m:
             amount = m.group(1).replace(",", "")
     try:
-        amount = round(float(amount) * 100)  # keep paise — they identify the ticket
+        amount = int(float(amount))  # whole rupees — advertised price, no paise games
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "could not parse amount from message"}), 400
     if amount <= 0:
         return jsonify({"ok": False, "error": "bad amount"}), 400
 
-    # Name is display-only (names collide across UPI users). Paise in the amount
-    # are the real identifier — every ticket has its own unique paise suffix.
+    # Name is display-only (names collide across UPI users).
 
     # Idempotency: same SMS forwarded twice must not double-issue; UTR = primary unique key
     if upi_ref:
@@ -753,21 +744,18 @@ def api_upi_webhook():
         if dup:
             return jsonify({"ok": True, "accepted": False, "duplicate": True, "ticket": dup["id"]})
 
-    # PRIMARY match: exact paise (amount*100). Every ticket gets unique paise,
-    # so this is globally unambiguous regardless of the payer's name.
+    # Match: exact advertised amount. Auto-accept ONLY when unambiguous —
+    # several pending bookings at the same amount fall back to manual approval.
     cands = [r for r in DB["registrations"] if r["status"] == "pending" and
-             r.get("expectedAmount", 0) * 100 + _paise_for_id(r["id"]) == amount]
+             r.get("expectedAmount", 0) == amount]
 
     if len(cands) != 1:
-        # With unique paise this should be impossible while a booking is pending;
-        # anything else (expired/refunded/paid ticket paise reused, wrong amount)
-        # lands here for manual handling.
         return jsonify({"ok": True, "accepted": False,
                         "reason": "ambiguous" if len(cands) > 1 else "no-matching-pending-booking",
                         "amount": amount, "candidates": [r["id"] for r in cands]})
 
     reg = cands[0]
-    mark_paid(reg["id"], amount / 100, source="auto-upi")
+    mark_paid(reg["id"], amount, source="auto-upi")
     live = find_reg(reg["id"])
     if live:
         live["autoRef"] = upi_ref or None

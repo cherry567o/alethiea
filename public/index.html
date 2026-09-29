@@ -227,7 +227,7 @@
           <br />
           <button id="demoPayBtn">Simulate successful payment</button>
         </div>
-        <p class="muted">This page checks automatically. Once paid, your entry ticket appears here.<br />Your amount is <b style="color:#f5c542" id="exactAmt">₹69</b> — pay <b style="color:#f5c542">exactly this</b> (the extra paise are your ticket's unique ID, so we can confirm you instantly without asking anyone's name).</p>
+        <p class="muted">This page checks automatically. Once paid, your entry ticket appears here.<br />Keep this page open.</p>
         <a href="/register" class="back">← Back to form</a>
       </div>
     </div>
@@ -330,10 +330,7 @@
       qrView.classList.remove("hidden");
       document.getElementById("statusBadge").textContent = "AWAITING PAYMENT";
       document.getElementById("qrImg").src = data.qrDataUrl;
-      const exact = data.exactAmount || (data.expectedAmount || data.amount);
-      document.getElementById("qrAmount").textContent = rs(exact);
-      const ea = document.getElementById("exactAmt");
-      if (ea) ea.textContent = rs(exact);
+      document.getElementById("qrAmount").textContent = rs(data.expectedAmount || data.amount);
       document.getElementById("personCount").textContent =
         data.persons + (data.persons === 1 ? " person" : " persons");
       document.getElementById("ticketId").textContent = data.id;
