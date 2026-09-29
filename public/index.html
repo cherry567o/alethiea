@@ -245,6 +245,7 @@
         <p class="subtitle" id="paidDetails"></p>
         <div class="qr-frame"><img id="ticketQr" alt="Entry ticket QR" /></div>
         <div class="ticket-id" id="ticketId2"></div>
+        <div style="margin-top:10px; font-size:13px; color:#8f8dab;">Door PIN: <b id="ticketPin" style="font-family:monospace; font-size:22px; color:#f5c542; letter-spacing:4px;">----</b><br /><span style="font-size:11.5px;">keep it private — we'll ask for it at the entrance</span></div>
         <p class="muted">Show this QR at the entrance. Each scan counts one person.<br />Amount collected: <b id="paidAmount" style="color:#f5c542"></b><br />Evening runs <b style="color:#e8e6f0">~1.5 hours</b> — see you there.</p>
         <a href="/register" class="back">← Register another person</a>
       </div>
@@ -399,6 +400,7 @@
         r.name + " · " + r.persons + (r.persons === 1 ? " person" : " persons");
       document.getElementById("ticketQr").src = r.ticketQrDataUrl;
       document.getElementById("ticketId2").textContent = r.id;
+      document.getElementById("ticketPin").textContent = r.pin || "----";
       document.getElementById("paidAmount").textContent = rs(r.amountPaid);
     }
 

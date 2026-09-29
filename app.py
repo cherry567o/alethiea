@@ -256,6 +256,9 @@ def mark_paid(reg_id, paid_amount=None, source=""):
     reg["amountPaid"] = amount
     reg["paidAt"] = int(time.time() * 1000)  # shown in admin as 'accepted <time>'
     reg["paidSource"] = source  # 'auto-upi' shows as 🤖 in the admin panel
+    # Door PIN: 4 digits, required with the ticket at check-in so a stolen ticket
+    # link alone can't burn someone's entry.
+    reg["pin"] = f"{secrets.randbelow(10000):04d}"
     payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
     if payment:
         payment.update({"status": "succeeded", "amount": amount, "paidAt": int(time.time() * 1000), "source": source})
@@ -291,6 +294,7 @@ def send_ticket_email(reg: dict):
             f"Persons: {reg['persons']}\n"
             f"Reopen / re-show your entry ticket QR any time:\n{ticket_url}\n\n"
             f"Show the QR at the entrance - each scan counts one person.\n"
+            f"Your door PIN: {reg.get('pin', '----')} (keep it private - we will ask for it at the door)\n"
             f"Saturday, 31 October 2026, 6:30 to 8:00 PM (~1.5 hours)\n"
             f"Venue: to be announced, Bangalore (we will message you)\n"
             f"See you there.\n"
@@ -631,6 +635,7 @@ def api_status(reg_id):
         reg = find_reg(reg_id)
 
     # The entry-ticket QR exists ONLY after the admin verifies payment (anti-scam).
+    # The PIN is included so the ticket screen can display it next to the QR.
     resp = {**reg, **extra, "qrDataUrl": make_qr(public_base(request) + f"/pay/{reg_id}")}
     if reg["status"] == "paid":
         resp["ticketQrDataUrl"] = make_qr(public_base(request) + f"/checkin/{reg_id}")
@@ -875,6 +880,9 @@ def api_admin_checkin():
         return jsonify({"error": "This ticket was refunded - entry cancelled."}), 400
     if reg["status"] != "paid":
         return jsonify({"error": "Payment not completed for this ticket."}), 400
+    pin = (body.get("pin") or "").strip()
+    if pin != reg.get("pin"):
+        return jsonify({"error": "Wrong PIN. Ask the attendee for the 4-digit PIN on their ticket.", "pinRequired": True}), 403
     reg["checkedIn"] = min(reg["checkedIn"] + 1, reg["persons"])
     _save(DB)
     return jsonify({"ok": True, "checkedIn": reg["checkedIn"], "persons": reg["persons"]})
@@ -882,11 +890,23 @@ def api_admin_checkin():
 
 @app.get("/checkin/<reg_id>")
 def checkin_scan(reg_id):
-    """URL encoded in the ticket QR — scanning at the door performs check-in (admin device)."""
+    """URL encoded in the ticket QR — scanning at the door performs check-in (admin device).
+    Requires the attendee's 4-digit PIN (typed by the organizer) so a copied ticket
+    link alone can never check anyone in."""
     reg = find_reg(reg_id)
     if not reg:
         return "Ticket not found", 404
     if request.args.get("key") == ADMIN_KEY and reg["status"] == "paid":
+        pin = (request.args.get("pin") or "").strip()
+        if pin != reg.get("pin"):
+            return f"""<h2>🔢 PIN required</h2>
+<p>{reg['name']} · {reg['id']}</p>
+<form method="get" action="/checkin/{reg_id}">
+<input type="hidden" name="key" value="{ADMIN_KEY}" />
+<input name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="4-digit PIN" style="font-size:20px; padding:8px; width:120px; text-align:center;" required />
+<button style="font-size:16px; padding:8px 16px;">Check in →</button>
+</form>
+<p style="color:#888">Ask the attendee for the PIN shown on their ticket.</p>"""
         reg["checkedIn"] = min(reg["checkedIn"] + 1, reg["persons"])
         _save(DB)
         return f"""<h2>✅ Checked in {reg['checkedIn']}/{reg['persons']}</h2>

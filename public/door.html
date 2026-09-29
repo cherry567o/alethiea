@@ -80,7 +80,8 @@
     </div>
 
     <div class="manual">
-      <input id="ticketInput" placeholder="Ticket ID e.g. ME-7B1D4E" autocomplete="off" />
+      <input id="ticketInput" placeholder="Ticket ID e.g. ME-7B1D4E" autocomplete="off" style="flex:1.4" />
+      <input id="pinInput" inputmode="numeric" maxlength="4" placeholder="PIN" autocomplete="off" style="flex:1; width:70px; text-align:center; font-size:16px; letter-spacing:2px;" />
       <button id="checkBtn">Check in →</button>
     </div>
 
@@ -109,6 +110,8 @@
       if (!id) return;
       const key = keyNow();
       if (!key) { showResult("bad", "Enter the admin key first."); return; }
+      const pin = (document.getElementById("pinInput").value || "").trim();
+      if (!/^[0-9]{4}$/.test(pin)) { showResult("bad", "Enter the attendee's 4-digit PIN (shown on their ticket)."); return; }
       // debounce same scan within 3s
       const now = Date.now();
       if (id === lastScan && now - lastScanAt < 3000) return;
@@ -118,7 +121,7 @@
         const res = await fetch("/api/admin/checkin?key=" + encodeURIComponent(key), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id }),
+          body: JSON.stringify({ id, pin }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || "Check-in failed");
@@ -183,6 +186,7 @@
 
     document.getElementById("checkBtn").addEventListener("click", () => checkIn(document.getElementById("ticketInput").value));
     document.getElementById("ticketInput").addEventListener("keydown", (e) => { if (e.key === "Enter") checkIn(e.target.value); });
+    document.getElementById("pinInput").addEventListener("keydown", (e) => { if (e.key === "Enter") checkIn(document.getElementById("ticketInput").value); });
 
     // ---- camera scanner ----
     let stream = null, detector = null, rafId = null;
