@@ -237,6 +237,7 @@ def mark_paid(reg_id, paid_amount=None, source=""):
     amount = paid_amount or reg["expectedAmount"]
     reg["status"] = "paid"
     reg["amountPaid"] = amount
+    reg["paidAt"] = int(time.time() * 1000)  # shown in admin as 'accepted <time>'
     payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
     if payment:
         payment.update({"status": "succeeded", "amount": amount, "paidAt": int(time.time() * 1000), "source": source})

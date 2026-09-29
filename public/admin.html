@@ -33,6 +33,13 @@
     .stat .value { font-size: 26px; color: #f5c542; margin-top: 6px; font-weight: bold; }
     .stat .value.green { color: #52e5a3; }
 
+    .ftab {
+      padding: 8px 16px; border-radius: 999px; border: 1px solid #3b4270;
+      background: #161936; color: #cfcde4; font-size: 13px; cursor: pointer; font-family: inherit;
+    }
+    .ftab.active { background: #f5c542; color: #14173a; border-color: #f5c542; font-weight: bold; }
+    .ftab:hover { border-color: #f5c542; }
+
     table { width: 100%; border-collapse: collapse; background: rgba(20, 23, 44, 0.85); border-radius: 14px; overflow: hidden; border: 1px solid #2e3358; }
     th, td { padding: 11px 14px; text-align: left; font-size: 13.5px; border-bottom: 1px solid #23274a; }
     th { color: #8f8dab; font-weight: normal; text-transform: uppercase; font-size: 11.5px; letter-spacing: 0.06em; background: #161936; }
@@ -126,11 +133,19 @@
       </div>
     </div>
 
+    <div id="filterTabs" style="display:flex; gap:8px; flex-wrap:wrap; margin:14px 0;">
+      <button class="ftab active" data-f="all">All</button>
+      <button class="ftab" data-f="pending">Pending payment</button>
+      <button class="ftab" data-f="paid">Accepted / paid</button>
+      <button class="ftab" data-f="checked">Checked-in</button>
+      <button class="ftab" data-f="refunded">Refunded</button>
+    </div>
+
     <table>
       <thead>
         <tr>
           <th>Ticket ID</th><th>Name</th><th>Email</th><th>Persons</th>
-          <th>Amount</th><th>Status</th><th>Email</th><th>Check-in</th><th>Registered</th>
+          <th>Amount</th><th>Status</th><th>Email</th><th>Check-in</th><th>Registered / Accepted</th>
         </tr>
       </thead>
       <tbody id="rows"></tbody>
@@ -140,6 +155,7 @@
   <script>
     let all = [];
     let query = "";
+    let filter = "all";
     const KEY = new URLSearchParams(location.search).get("key") || "";
     const authUrl = (u) => u + (u.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(KEY);
 
@@ -204,16 +220,17 @@
 
     function renderRows() {
       const q = query.toLowerCase();
-      const list = all.filter(
-        (r) =>
-          !q ||
-          r.name.toLowerCase().includes(q) ||
-          r.email.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q)
-      );
+      const list = all.filter((r) => {
+        if (q && !(r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q) || r.id.toLowerCase().includes(q))) return false;
+        if (filter === "pending") return r.status === "pending" || r.status === "verifying";
+        if (filter === "paid") return r.status === "paid";
+        if (filter === "checked") return r.checkedIn > 0 && r.status === "paid";
+        if (filter === "refunded") return r.status === "refunded";
+        return true;
+      });
       const tbody = document.getElementById("rows");
       if (!list.length) {
-        tbody.innerHTML = `<tr><td colspan="9" class="empty">No registrations yet — share the poster QR to get started.</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="empty">${filter === "all" ? "No registrations yet — share the poster QR to get started." : "Nothing in “" + filter + "” right now."}</td></tr>`;
         return;
       }
       tbody.innerHTML = list
@@ -232,11 +249,18 @@
               ? `<span class="badge checked-in">all in (${r.checkedIn})</span>`
               : `<button class="scan-btn" data-id="${r.id}" ${r.status !== "paid" ? "disabled" : ""}>Check in (${r.checkedIn}/${r.persons})</button>`}
             </td>
-            <td class="id-cell">${new Date(r.createdAt).toLocaleString()}</td>
+            <td class="id-cell">${new Date(r.createdAt).toLocaleString()}${r.paidAt ? `<div style="color:#52e5a3">accepted ${new Date(r.paidAt).toLocaleTimeString()}</div>` : ""}</td>
           </tr>`
         )
         .join("");
     }
+
+    document.querySelectorAll(".ftab").forEach((b) => b.addEventListener("click", () => {
+      document.querySelectorAll(".ftab").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      filter = b.dataset.f;
+      renderRows();
+    }));
 
     function esc(s) {
       return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -314,7 +338,7 @@
         body: JSON.stringify({ id: btn.dataset.id }),
       });
       refresh();
-    });
+    }
 
     refresh();
     setInterval(refresh, 4000);
