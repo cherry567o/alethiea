@@ -21,7 +21,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlencode
+from urllib.parse import urlencode, unquote
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
@@ -78,6 +78,31 @@ except Exception:
     pass
 
 app = Flask(__name__, static_folder=str(PUBLIC_DIR), static_url_path="")
+
+# --- Vercel rewrite support -------------------------------------------------
+# vercel.json sends every request to the function with the real path carried
+# in the __vpath query param (Vercel's rewrite replaces the URL path itself).
+# Wrapping wsgi_app (not the Flask instance) guarantees it runs no matter how
+# the serverless runtime invokes the app. No-op locally (no __vpath present).
+class _RestoreOriginalPath:
+    def __init__(self, wsgi):
+        self.wsgi = wsgi
+
+    def __call__(self, environ, start_response):
+        raw = environ.get("QUERY_STRING", "")
+        vpath, keep = "", []
+        for pair in raw.split("&") if raw else []:
+            if pair.startswith("__vpath="):
+                vpath = pair[len("__vpath="):]
+            else:
+                keep.append(pair)
+        if vpath:
+            environ["PATH_INFO"] = "/" + unquote(vpath).strip("/")
+            environ["QUERY_STRING"] = "&".join(keep)
+        return self.wsgi(environ, start_response)
+
+
+app.wsgi_app = _RestoreOriginalPath(app.wsgi_app)
 
 
 @app.after_request
@@ -197,7 +222,7 @@ def upi_payment_uri(reg: dict) -> str:
         "cu": "INR",
         "tn": f"Ticket {reg['id']} {reg['name']}",
     }
-    from urllib.parse import urlencode
+    from urllib.parse import urlencode, unquote
     return "upi://pay?" + urlencode(params)
 
 
@@ -643,7 +668,7 @@ def api_admin_refund():
     if not re.match(r"^[a-z0-9.\-_]{2,50}@[a-z]{2,20}$", vpa):
         return jsonify({"error": "Enter the attendee's UPI ID in the form name@bank."}), 400
     amount = reg["amountPaid"] or reg["expectedAmount"]
-    from urllib.parse import urlencode
+    from urllib.parse import urlencode, unquote
     uri = "upi://pay?" + urlencode({
         "pa": vpa, "pn": reg["name"], "am": str(amount), "cu": "INR",
         "tn": f"Refund {reg['id']} Aletheia",
