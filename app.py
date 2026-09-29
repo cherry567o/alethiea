@@ -105,6 +105,16 @@ class _RestoreOriginalPath:
 app.wsgi_app = _RestoreOriginalPath(app.wsgi_app)
 
 
+@app.before_request
+def _fresh_db_per_request():
+    """Serverless instances stay warm and would otherwise serve stale in-memory
+    bookings (and resurrect wiped rows on their next save). Reload from the
+    cloud DB on every request; locally (file mode) this keeps parity too."""
+    global DB
+    if REDIS_URL and REDIS_TOKEN:
+        DB = _load()
+
+
 @app.after_request
 def _no_cache_html(resp):
     """HTML pages must always be fresh — stale caches on phones caused poster glitches."""
