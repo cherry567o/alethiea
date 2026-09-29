@@ -15,17 +15,17 @@ from app import app as flask_app  # noqa: E402,F401
 
 
 def _restore_original_path(wsgi):
-    """Map /api/index.py?__vpath=register  ->  PATH_INFO=/register for Flask."""
+    """Restore PATH_INFO from the __vpath query param, however Vercel presents the path."""
     def handler(environ, start_response):
-        path = environ.get("PATH_INFO", "")
-        if path == "/api/index.py" or path.startswith("/api/index.py/"):
-            raw = environ.get("QUERY_STRING", "")
-            keep, vpath = [], ""
-            for pair in raw.split("&") if raw else []:
-                if pair.startswith("__vpath="):
-                    vpath = pair[len("__vpath="):]
-                else:
-                    keep.append(pair)
+        raw = environ.get("QUERY_STRING", "")
+        vpath = ""
+        keep = []
+        for pair in raw.split("&") if raw else []:
+            if pair.startswith("__vpath="):
+                vpath = pair[len("__vpath="):]
+            else:
+                keep.append(pair)
+        if vpath:
             environ["PATH_INFO"] = "/" + unquote(vpath).strip("/")
             environ["QUERY_STRING"] = "&".join(keep)
         return wsgi(environ, start_response)
