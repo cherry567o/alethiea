@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Register — Aletheia — To Uncover</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Georgia, 'Times New Roman', serif;
+      background: radial-gradient(ellipse at top, #1b1f3b 0%, #0b0d1a 60%, #05060f 100%);
+      color: #e8e6f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      width: 100%;
+      max-width: 460px;
+      background: rgba(20, 23, 44, 0.85);
+      border: 1px solid #2e3358;
+      border-radius: 16px;
+      padding: 32px 28px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+    }
+    h1 { font-size: 22px; line-height: 1.3; text-align: center; margin-bottom: 4px; color: #fff; }
+    .highlight { color: #f5c542; }
+    .subtitle { text-align: center; color: #a8a6c0; font-size: 14px; margin-bottom: 20px; }
+    label { display: block; font-size: 13px; color: #b9b7d0; margin: 14px 0 6px; }
+    input[type="text"], input[type="email"], input[type="number"] {
+      width: 100%;
+      padding: 11px 12px;
+      border-radius: 8px;
+      border: 1px solid #33395f;
+      background: #12142a;
+      color: #fff;
+      font-size: 15px;
+      font-family: inherit;
+    }
+    input:focus { outline: none; border-color: #f5c542; }
+    .topics { display: none; }
+    .topics label.chip {
+      margin: 0;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid #3b4270;
+      background: #161936;
+      color: #cfcde4;
+      font-size: 13px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .topics input { display: none; }
+    .topics label.chip:has(input:checked) {
+      border-color: #f5c542;
+      color: #f5c542;
+      background: #1e2140;
+    }
+    .persons-row { display: flex; align-items: center; gap: 10px; }
+    .persons-row input { width: 90px; }
+    .price-note { font-size: 13px; color: #8f8dab; }
+    .total {
+      margin-top: 18px;
+      padding: 12px 14px;
+      border-radius: 10px;
+      background: #12142a;
+      border: 1px dashed #3b4270;
+      display: flex;
+      justify-content: space-between;
+      font-size: 15px;
+    }
+    .total b { color: #f5c542; }
+    button.pay {
+      width: 100%;
+      margin-top: 18px;
+      padding: 13px;
+      border: none;
+      border-radius: 10px;
+      background: #f5c542;
+      color: #14173a;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    button.pay:disabled { opacity: 0.6; cursor: not-allowed; }
+    .error { color: #ff8a8a; font-size: 13px; margin-top: 10px; text-align: center; min-height: 16px; }
+    .confirmed-box { margin-top: 14px; padding: 14px; border-radius: 10px; text-align: center; background: #123c2a; border: 1px solid #1e6b4a; color: #baf5d8; font-size: 14px; line-height: 1.7; }
+    .deadline-note { font-size: 12.5px; color: #52e5a3; text-align: center; margin-top: 10px; min-height: 15px; }
+    .closed-box {
+      margin-top: 14px; padding: 14px; border-radius: 10px; text-align: center;
+      background: #3c1212; border: 1px solid #6b1e1e; color: #ffb3b3; font-size: 14px; line-height: 1.6;
+    }
+    .closed-box b { color: #fff; }
+    .hidden { display: none; }
+    .qr-wrap { text-align: center; }
+    .qr-frame { display: inline-block; background: #fff; border-radius: 12px; padding: 12px; }
+    .qr-frame img { display: block; width: 230px; height: 230px; }
+    .ticket-id { font-family: monospace; font-size: 14px; color: #f5c542; margin-top: 10px; }
+    .demo-box {
+      margin-top: 16px;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px dashed #f5c542;
+      font-size: 13px;
+      color: #f5c542;
+      text-align: center;
+    }
+    .demo-box button {
+      margin-top: 8px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      border: none;
+      background: #f5c542;
+      color: #14173a;
+      font-weight: bold;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .muted { color: #8f8dab; font-size: 12.5px; margin-top: 14px; text-align: center; line-height: 1.5; }
+    .badge { display: inline-block; padding: 4px 12px; border-radius: 999px; font-size: 12px; margin-bottom: 12px; }
+    .badge.paid { background: #123c2a; color: #52e5a3; border: 1px solid #1e6b4a; }
+    .badge.pending { background: #3c3212; color: #f5c542; border: 1px solid #6b5a1e; }
+    a.back { color: #f5c542; font-size: 13px; text-decoration: none; display: inline-block; margin-top: 16px; }
+    a.cta-link {
+      display: block; margin-top: 14px; padding: 11px; border-radius: 10px;
+      background: #1e2140; border: 1px solid #3b4270; color: #f5c542;
+      font-size: 14px; text-decoration: none;
+    }
+    a.cta-link:hover { border-color: #f5c542; }
+    .claim-row { margin-top: 12px; }
+    .claim-row input {
+      width: 100%; padding: 11px 12px; border-radius: 8px; border: 1px solid #33395f;
+      background: #12142a; color: #fff; font-size: 15px; font-family: inherit;
+    }
+    .claim-row input:focus { outline: none; border-color: #f5c542; }
+    .claim-btn {
+      width: 100%; margin-top: 10px; padding: 12px; border: none; border-radius: 10px;
+      background: #123c2a; border: 1px solid #1e6b4a; color: #52e5a3;
+      font-size: 15px; font-weight: bold; cursor: pointer; font-family: inherit;
+    }
+    .claim-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <!-- ===== Step 1: registration form ===== -->
+    <div id="formView">
+      <h1>Aletheia<br /><span class="highlight">— To Uncover</span></h1>
+      <p class="subtitle">The Universe Left a Few Questions Open · Bangalore · ₹69 per person · runs ~1.5 hours</p>
+      <div style="display:flex; justify-content:center; gap:8px; flex-wrap:wrap; margin:-8px 0 14px; font-size:12px;">
+        <span style="background:#161936; border:1px solid #2e3358; padding:5px 11px; border-radius:999px;">📅 <b style="color:#f5c542">Sat, 31 Oct 2026</b></span>
+        <span style="background:#161936; border:1px solid #2e3358; padding:5px 11px; border-radius:999px;">🕒 <b style="color:#f5c542">6:30–8:00 PM</b></span>
+        <span style="background:#161936; border:1px solid #2e3358; padding:5px 11px; border-radius:999px;">📍 Venue TBA · Bangalore</span>
+      </div>
+      <p style="text-align:center; color:#9fe8c6; font-style:italic; font-size:12.5px; line-height:1.6; margin:-12px 0 12px;">Just a friendly talk about things which won't be visible to our eyes in the world around us ✨</p>
+
+      <div style="margin:0 0 18px; padding:11px 13px; border-radius:10px; background:rgba(245,197,66,0.06); border:1px dashed rgba(245,197,66,0.3);">
+        <div style="color:#f5c542; font-weight:bold; font-size:13px; margin-bottom:8px; text-align:center;">✦ What we'll talk about</div>
+        <div style="display:flex; flex-wrap:wrap; gap:6px; justify-content:center;">
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Spirituality</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Life after death &amp; the soul</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Consciousness &amp; the mind</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Aliens &amp; life beyond Earth</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Time &amp; reality</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Karma, destiny &amp; free will</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Dreams &amp; the subconscious</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">God &amp; faith</span>
+          <span style="background:#161936; border:1px solid #2e3358; padding:4px 10px; border-radius:999px; font-size:12px; color:#cfcde4;">Astrology &amp; the unknown</span>
+        </div>
+        <div style="margin-top:8px; font-size:11.5px; color:#8f8dab; font-style:italic; text-align:center; line-height:1.6;">Just so you know what we'll sit and talk about with each other in the evening — nothing to pick, just come curious.</div>
+      </div>
+
+      <form id="regForm">
+        <label for="name">Your name</label>
+        <input type="text" id="name" name="name" required placeholder="Full name" />
+
+        <label for="email">Email (one person)</label>
+        <input type="email" id="email" name="email" required placeholder="you@example.com" />
+
+        <label for="persons">No. of persons</label>
+        <div class="persons-row">
+          <input type="number" id="persons" name="persons" min="1" max="20" value="1" required />
+          <span class="price-note">₹69 per person</span>
+        </div>
+
+        <div class="total">
+          <span>Total to pay</span>
+          <b id="totalAmount">₹69</b>
+        </div>
+
+        <button type="submit" class="pay" id="payBtn">Continue to payment →</button>
+        <div class="error" id="errorMsg"></div>
+        <div class="deadline-note" id="deadlineNote"></div>
+        <div class="closed-box hidden" id="closedBox">
+          <b>Registrations are closed.</b><br />
+          The booking deadline has passed. Tickets already issued remain valid — see you at the venue.
+        </div>
+        <p class="muted">After payment you'll get your entry ticket QR.<br /><b style="color:#e8e6f0">At the venue</b> you pick your discussion circle and sit with people who pulled the same question. Evening runs ~1.5 hours.</p>
+      </form>
+    </div>
+
+    <!-- ===== Step 2: payment QR ===== -->
+    <div id="qrView" class="hidden">
+      <div class="qr-wrap">
+        <span class="badge pending" id="statusBadge">PENDING PAYMENT</span>
+        <h1 style="font-size:20px;">Scan &amp; Pay <span id="qrAmount" style="color:#f5c542">₹69</span></h1>
+        <p class="subtitle" id="personCount">1 person</p>
+        <div class="qr-frame"><img id="qrImg" alt="Payment QR code" /></div>
+        <div class="ticket-id" id="ticketId"></div>
+
+        <!-- Same-phone payment: no scanning, no second phone -->
+        <a id="payOnPhone" class="hidden" href="#" style="display:block; width:100%; margin-top:12px; padding:13px; border:none; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:15px; font-weight:bold; text-align:center; text-decoration:none;">Pay ₹69 × persons on this phone →</a>
+
+        <!-- UPI mode: scan with any UPI app, then confirm -->
+        <div id="confirmBox" class="hidden" style="margin-top:14px;">
+          <div class="confirmed-box">Paid? Great — the organizer is confirming it in their UPI app.<br /><b>Your ticket then appears on this screen automatically and is sent to your email.</b><br />No need to report anything — we can see every payment ourselves.</div>
+        </div>
+        <div class="demo-box hidden" id="demoBox">
+          Demo mode — simulate a payment:
+          <br />
+          <button id="demoPayBtn">Simulate successful payment</button>
+        </div>
+        <p class="muted">This page checks automatically. Once paid, your entry ticket appears here.<br />Keep this page open.</p>
+        <a href="/register" class="back">← Back to form</a>
+      </div>
+    </div>
+
+    <!-- ===== Step 3: paid ticket ===== -->
+    <div id="paidView" class="hidden">
+      <div class="qr-wrap">
+        <span class="badge paid">PAID ✓</span>
+        <h1 style="font-size:20px;">You're in!</h1>
+        <p class="subtitle" id="paidDetails"></p>
+        <div class="qr-frame"><img id="ticketQr" alt="Entry ticket QR" /></div>
+        <div class="ticket-id" id="ticketId2"></div>
+        <p class="muted">Show this QR at the entrance. Each scan counts one person.<br />Amount collected: <b id="paidAmount" style="color:#f5c542"></b><br />Evening runs <b style="color:#e8e6f0">~1.5 hours</b> — see you there.</p>
+        <a href="/register" class="back">← Register another person</a>
+      </div>
+    </div>
+    <!-- ===== refunded ===== -->
+    <div id="refundedView" class="hidden">
+      <div class="closed-box" style="background:#12253c; border-color:#1e4a6b; color:#bfe0ff;"><b>Money returned.</b><br />This booking was refunded by the organizer and is cancelled.</div>
+    </div>
+  </div>
+
+  <script>
+    const rs = (n) => "₹" + n;
+    const PER_PERSON = 69;
+    let current = null;
+    let pollTimer = null;
+
+    const formView = document.getElementById("formView");
+    const qrView = document.getElementById("qrView");
+    const paidView = document.getElementById("paidView");
+
+    document.getElementById("persons").addEventListener("input", (e) => {
+      const n = Math.max(1, parseInt(e.target.value || "1", 10));
+      document.getElementById("totalAmount").textContent = rs(n * PER_PERSON);
+    });
+
+    // Keep total in sync with the input's real value on load (browsers can autofill)
+    function syncTotal() {
+      const n = Math.max(1, parseInt(document.getElementById("persons").value || "1", 10));
+      document.getElementById("persons").value = n;
+      document.getElementById("totalAmount").textContent = rs(n * PER_PERSON);
+    }
+    syncTotal();
+
+    // Booking deadline: disable the form when closed, show countdown while open
+    (async () => {
+      try {
+        const res = await fetch("/api/event-info");
+        const ev = await res.json();
+        const note = document.getElementById("deadlineNote");
+        if (ev.closed) {
+          document.getElementById("closedBox").classList.remove("hidden");
+          const btn = document.getElementById("payBtn");
+          btn.disabled = true;
+          btn.textContent = "Registrations closed";
+        } else if (ev.deadlineTs && ev.daysLeft !== null) {
+          const d = new Date(ev.deadlineTs);
+          const when = d.toLocaleDateString("en-IN", { day: "numeric", month: "long" });
+          note.textContent = ev.daysLeft === 0 ? "\u23F1 Last day to book — closes tonight!" : "\u23F1 Bookings close on " + when + " (" + ev.daysLeft + " days left)";
+        }
+      } catch (_) {}
+    })();
+
+    document.getElementById("regForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const errorMsg = document.getElementById("errorMsg");
+      errorMsg.textContent = "";
+      const btn = document.getElementById("payBtn");
+      btn.disabled = true;
+      btn.textContent = "Creating payment…";
+
+      const payload = {
+        name: document.getElementById("name").value.trim(),
+        email: document.getElementById("email").value.trim(),
+        persons: parseInt(document.getElementById("persons").value, 10) || 1,
+      };
+
+      try {
+        const res = await fetch("/api/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Registration failed");
+        current = data;
+        history.replaceState(null, "", "/pay/" + data.id);
+        showQr(data);
+      } catch (err) {
+        errorMsg.textContent = err.message;
+        btn.disabled = false;
+        btn.textContent = "Continue to payment →";
+      }
+    });
+
+    function showQr(data) {
+      formView.classList.add("hidden");
+      qrView.classList.remove("hidden");
+      document.getElementById("statusBadge").textContent = "AWAITING PAYMENT";
+      document.getElementById("qrImg").src = data.qrDataUrl;
+      document.getElementById("qrAmount").textContent = rs(data.expectedAmount || data.amount);
+      document.getElementById("personCount").textContent =
+        data.persons + (data.persons === 1 ? " person" : " persons");
+      document.getElementById("ticketId").textContent = data.id;
+      const payBtn = document.getElementById("payOnPhone");
+      if (data.paymentMode === "upi" && data.upiUri) {
+        payBtn.href = data.upiUri;
+        payBtn.classList.remove("hidden");
+        payBtn.textContent = "Pay " + rs(data.expectedAmount) + " on this phone →";
+      } else if (data.paymentMode === "stripe" && data.checkoutUrl) {
+        payBtn.href = data.checkoutUrl;
+        payBtn.classList.remove("hidden");
+        payBtn.textContent = "Pay " + rs(data.expectedAmount) + " securely →";
+      } else {
+        payBtn.classList.add("hidden");
+      }
+      if (data.demoMode) document.getElementById("demoBox").classList.remove("hidden");
+      startPolling();
+    }
+
+    function startPolling() {
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(checkStatus, 2500);
+    }
+
+    async function checkStatus() {
+      if (!current) return;
+      try {
+        const res = await fetch("/api/status/" + current.id);
+        if (!res.ok) return;
+        const r = await res.json();
+        if (r.status === "refunded") {
+          clearInterval(pollTimer);
+          showRefunded();
+        } else if (r.status === "paid") {
+          clearInterval(pollTimer);
+          const box = document.getElementById("confirmBox");
+          if (!box.classList.contains("hidden")) { box.classList.add("hidden"); }
+          if (current && current.status && current.status !== "paid") {
+            box.querySelector(".confirmed-box").innerHTML = "Payment confirmed ✓ — ticket issued below and sent to your email.";
+            box.classList.remove("hidden");
+          }
+          showPaid(r);
+        } else { current = r; }
+      } catch (_) {}
+    }
+
+    function showRefunded() {
+      formView.classList.add("hidden");
+      qrView.classList.add("hidden");
+      paidView.classList.add("hidden");
+      document.getElementById("refundedView").classList.remove("hidden");
+    }
+
+    function showPaid(r) {
+      qrView.classList.add("hidden");
+      paidView.classList.remove("hidden");
+      document.getElementById("paidDetails").textContent =
+        r.name + " · " + r.persons + (r.persons === 1 ? " person" : " persons");
+      document.getElementById("ticketQr").src = r.ticketQrDataUrl;
+      document.getElementById("ticketId2").textContent = r.id;
+      document.getElementById("paidAmount").textContent = rs(r.amountPaid);
+    }
+
+    document.getElementById("demoPayBtn").addEventListener("click", async () => {
+      if (!current) return;
+      await fetch("/api/demo/pay/" + current.id, { method: "POST" });
+      checkStatus();
+    });
+
+    // Direct /pay/:id visits (QR rescans, success_url redirect)
+    (async () => {
+      const m = location.pathname.match(/^\/pay\/(.+?)(\?|$)/);
+      if (!m) return;
+      try {
+        const res = await fetch("/api/status/" + m[1]);
+        const r = await res.json();
+        if (r.error) {
+          document.querySelector(".card").innerHTML =
+            '<div class="closed-box"><b>Ticket not found.</b><br />This ticket link is no longer valid.</div>';
+          return;
+        }
+        current = r;
+        if (r.status === "refunded") showRefunded(); else if (r.status === "paid") showPaid(r); else showQr(r);
+      } catch (_) {}
+    })();
+  </script>
+</body>
+</html>

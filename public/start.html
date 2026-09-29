@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aletheia — To Uncover</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Georgia, 'Times New Roman', serif;
+      background: radial-gradient(ellipse at top, #1b1f3b 0%, #0b0d1a 60%, #05060f 100%);
+      color: #e8e6f0;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .card {
+      width: 100%;
+      max-width: 480px;
+      background: rgba(20, 23, 44, 0.85);
+      border: 1px solid #2e3358;
+      border-radius: 16px;
+      padding: 36px 30px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+      text-align: center;
+    }
+    h1 { font-size: 28px; line-height: 1.25; color: #fff; margin-bottom: 14px; }
+    .highlight { color: #f5c542; }
+    .sub { color: #a8a6c0; font-size: 14.5px; line-height: 1.6; margin-bottom: 20px; }
+    .when-where {
+      display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;
+      margin: 0 0 20px; font-size: 12.5px;
+    }
+    .when-where span { background: #161936; border: 1px solid #2e3358; padding: 6px 12px; border-radius: 999px; color: #e8e6f0; }
+    .when-where b { color: #f5c542; font-weight: bold; }
+    .qr-wrap { display: inline-block; background: #fff; border-radius: 14px; padding: 14px; margin-bottom: 20px; }
+    .qr-wrap img { display: block; width: 220px; height: 220px; }
+    .qr-label { font-size: 13px; color: #8f8dab; margin-bottom: 22px; }
+    .qr-url { font-family: Consolas, monospace; font-size: 11.5px; color: #f5c542; word-break: break-all; margin-bottom: 14px; }
+    .know-note {
+      margin: 0 0 20px; padding: 12px 14px; border-radius: 10px;
+      background: rgba(82, 229, 163, 0.07); border: 1px dashed rgba(82, 229, 163, 0.35);
+      color: #9fe8c6; font-style: italic; font-size: 13px; line-height: 1.7;
+    }
+    .know-note .k { color: #52e5a3; font-style: normal; font-weight: bold; }
+    .topics-box {
+      margin: 0 0 20px; padding: 12px 14px; border-radius: 10px;
+      background: rgba(245, 197, 66, 0.06); border: 1px dashed rgba(245, 197, 66, 0.3);
+    }
+    .topics-box .t { color: #f5c542; font-weight: bold; font-size: 13px; margin-bottom: 9px; }
+    .topics-chips { display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; }
+    .topics-chips span { background: #161936; border: 1px solid #2e3358; padding: 4px 10px; border-radius: 999px; font-size: 12px; color: #cfcde4; }
+    .topics-note { margin-top: 9px; font-size: 11.5px; color: #8f8dab; font-style: italic; line-height: 1.6; }
+    .cta {
+      display: block;
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 10px;
+      background: #f5c542;
+      color: #14173a;
+      font-size: 16px;
+      font-weight: bold;
+      cursor: pointer;
+      font-family: inherit;
+      text-decoration: none;
+    }
+    .cta:hover { filter: brightness(1.07); }
+    .muted { font-size: 12.5px; color: #8f8dab; margin-top: 14px; line-height: 1.6; }
+    .steps { display: flex; justify-content: center; gap: 8px; margin-top: 22px; font-size: 12px; color: #6f6d8a; }
+    .steps span { background: #161936; border: 1px solid #2e3358; padding: 5px 10px; border-radius: 999px; }
+    .steps b { color: #f5c542; }
+    .dl-open { margin-top: 16px; font-size: 12.5px; color: #52e5a3; }
+    .dl-closed { margin-top: 16px; font-size: 13.5px; color: #ff8a8a; line-height: 1.6; }
+    .cta.closed { background: #161936; color: #6f6d8a; border: 1px solid #2e3358; pointer-events: none; filter: grayscale(1); }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Aletheia<br /><span class="highlight">— To Uncover</span></h1>
+    <p class="sub">The Universe Left a Few Questions Open — one evening in Bangalore, ~1.5 hours, to sit with all of them.<br />Scan the QR with your phone camera — or tap below — to begin.</p>
+
+    <div class="when-where">
+      <span>📅 <b>Saturday, 31 October 2026</b></span>
+      <span>🕒 <b>6:30 – 8:00 PM</b> (~1.5 hours)</span>
+      <span>📍 Venue: to be announced · Bangalore</span>
+    </div>
+
+    <div class="qr-wrap"><img id="startQr" alt="Start QR code" /></div>
+    <div class="qr-url" id="startUrl"></div>
+    <div class="qr-label">Share or print this QR — it opens the event page on any phone<br /><span style="color:#6f6d8a;">Tip: open with the <b style="color:#8f8dab">camera app</b> — payment-app scanners show an “external site” warning for any website link; it's harmless.</span></div>
+
+    <p class="know-note"><span class="k">You need to know:</span> this is just a friendly talk about things which won't be visible to our eyes in the world around us.</p>
+
+    <div class="topics-box">
+      <div class="t">✦ What we'll talk about</div>
+      <div class="topics-chips">
+        <span>Spirituality</span><span>Life after death &amp; the soul</span><span>Consciousness &amp; the mind</span><span>Aliens &amp; life beyond Earth</span><span>Time &amp; reality</span><span>Karma, destiny &amp; free will</span><span>Dreams &amp; the subconscious</span><span>God &amp; faith</span><span>Astrology &amp; the unknown</span>
+      </div>
+      <div class="topics-note">Just so you know what we'll sit and talk about with each other in the evening — nothing to pick, just come curious.</div>
+    </div>
+
+    <p class="dl-open hidden" id="dlOpen"></p>
+    <p class="dl-closed hidden" id="dlClosed">Registrations closed</p>
+
+    <a class="cta" id="enterBtn" href="/register">Enter — book your spot →</a>
+
+    <p class="muted">₹69 per person · runs ~1.5 hours · pay with any UPI app — GPay / PhonePe / Paytm<br />Your entry ticket QR is generated after payment.</p>
+
+    <div class="steps">
+      <span><b>1</b> Scan</span>
+      <span><b>2</b> Register</span>
+      <span><b>3</b> Pay ₹69</span>
+      <span><b>4</b> Get ticket</span>
+    </div>
+  </div>
+
+  <script>
+    // The QR always encodes the PUBLIC url the server is reachable at (never localhost),
+    // so a phone that scans it lands on the real site. The gold text under the QR shows
+    // exactly what it encodes — if that shows localhost, only PCs on this machine can use it.
+    fetch("/api/start-qr")
+      .then((r) => r.json())
+      .then((d) => {
+        document.getElementById("startQr").src = d.qrDataUrl;
+        document.getElementById("startUrl").textContent = d.url;
+      })
+      .finally(() => {
+        // booking deadline: hide entry when closed, show a countdown while open
+        fetch("/api/event-info").then((r) => r.json()).then((ev) => {
+          const open = document.getElementById("dlOpen");
+          const closed = document.getElementById("dlClosed");
+          if (ev.closed) {
+            closed.classList.remove("hidden");
+            const btn = document.getElementById("enterBtn");
+            btn.classList.add("closed");
+            btn.textContent = "Registrations closed";
+            if (ev.deadlineTs) {
+              const d = new Date(ev.deadlineTs);
+              closed.textContent = "Registrations closed on " + d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) + ".\u00A0 Tickets already booked stay valid.";
+            }
+          } else if (ev.deadlineTs && ev.daysLeft !== null) {
+            open.classList.remove("hidden");
+            const d = new Date(ev.deadlineTs);
+            const when = d.toLocaleDateString("en-IN", { day: "numeric", month: "long" });
+            open.textContent = ev.daysLeft === 0 ? "\u23F1 Last day to book — closes tonight!" : "\u23F1 Bookings close on " + when + " (" + ev.daysLeft + " days left)";
+          }
+        }).catch(() => {});
+      })
+      .catch(() => {
+        fetch("/api/qr?text=" + encodeURIComponent(location.origin + "/start"))
+          .then((r) => r.json())
+          .then((d) => { document.getElementById("startQr").src = d.qrDataUrl; });
+      });
+  </script>
+</body>
+</html>

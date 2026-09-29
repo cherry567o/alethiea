@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Aletheia — To Uncover</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Georgia, 'Times New Roman', serif;
+      background: radial-gradient(ellipse at top, #1b1f3b 0%, #0b0d1a 60%, #05060f 100%);
+      color: #e8e6f0;
+      min-height: 100vh;
+      padding: 28px 20px;
+    }
+    .wrap { max-width: 1100px; margin: 0 auto; }
+    h1 { font-size: 24px; color: #fff; margin-bottom: 4px; }
+    .sub { color: #a8a6c0; font-size: 14px; margin-bottom: 24px; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 14px;
+      margin-bottom: 28px;
+    }
+    .stat {
+      background: rgba(20, 23, 44, 0.85);
+      border: 1px solid #2e3358;
+      border-radius: 14px;
+      padding: 16px;
+    }
+    .stat .label { font-size: 12px; color: #8f8dab; text-transform: uppercase; letter-spacing: 0.06em; }
+    .stat .value { font-size: 26px; color: #f5c542; margin-top: 6px; font-weight: bold; }
+    .stat .value.green { color: #52e5a3; }
+
+    table { width: 100%; border-collapse: collapse; background: rgba(20, 23, 44, 0.85); border-radius: 14px; overflow: hidden; border: 1px solid #2e3358; }
+    th, td { padding: 11px 14px; text-align: left; font-size: 13.5px; border-bottom: 1px solid #23274a; }
+    th { color: #8f8dab; font-weight: normal; text-transform: uppercase; font-size: 11.5px; letter-spacing: 0.06em; background: #161936; }
+    tr:last-child td { border-bottom: none; }
+    .badge { padding: 3px 10px; border-radius: 999px; font-size: 11.5px; white-space: nowrap; }
+    .badge.paid { background: #123c2a; color: #52e5a3; border: 1px solid #1e6b4a; }
+    .badge.pending { background: #3c3212; color: #f5c542; border: 1px solid #6b5a1e; }
+    .badge.cancelled { background: #3c1212; color: #ff8a8a; border: 1px solid #6b1e1e; }
+    .badge.verifying { background: #2a123c; color: #c98aff; border: 1px solid #4a1e6b; }
+    .badge.checked-in { background: #12253c; color: #7db8ff; border: 1px solid #1e4a6b; }
+    .badge.refunded { background: #1f1230; color: #c9a6ff; border: 1px solid #3d2a5c; }
+    .v-ref { background: #1f1230; border-color: #3d2a5c; color: #c9a6ff; }
+    .modal-bg { display: none; position: fixed; inset: 0; background: rgba(4,6,15,.82); z-index: 50; align-items: center; justify-content: center; padding: 20px; }
+    .modal-bg.open { display: flex; }
+    .modal { background: #14172c; border: 1px solid #2e3358; border-radius: 14px; padding: 22px; max-width: 400px; width: 100%; text-align: center; }
+    .modal h3 { color: #fff; font-size: 16px; margin-bottom: 8px; }
+    .modal .hint { color: #a8a6c0; font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
+    .modal input { width: 100%; padding: 11px 12px; border-radius: 8px; border: 1px solid #33395f; background: #12142a; color: #fff; font-size: 15px; font-family: inherit; margin-bottom: 12px; }
+    .modal img { width: 210px; height: 210px; background: #fff; border-radius: 10px; padding: 8px; margin: 6px 0; }
+    .modal .vpa { font-family: monospace; color: #f5c542; font-size: 14px; }
+    .modal .row { display: flex; gap: 8px; justify-content: center; margin-top: 12px; }
+    .verify-btns { display: flex; gap: 6px; }
+    .v-btn { padding: 5px 10px; border-radius: 8px; cursor: pointer; font-family: inherit; font-size: 12.5px; border: 1px solid; }
+    .v-ok { background: #123c2a; border-color: #1e6b4a; color: #52e5a3; }
+    .v-no { background: #3c1212; border-color: #6b1e1e; color: #ff8a8a; }
+    .v-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .id-cell { font-family: monospace; font-size: 12px; color: #a8a6c0; }
+    .scan-btn {
+      padding: 5px 12px; border-radius: 8px; border: 1px solid #1e4a6b;
+      background: #12253c; color: #7db8ff; cursor: pointer; font-family: inherit; font-size: 12.5px;
+    }
+    .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 14px; flex-wrap: wrap; }
+    .toolbar input {
+      padding: 9px 12px; border-radius: 8px; border: 1px solid #33395f;
+      background: #12142a; color: #fff; font-size: 14px; width: 240px; font-family: inherit;
+    }
+    .auto-note { font-size: 12.5px; color: #8f8dab; }
+    .empty { padding: 30px; text-align: center; color: #8f8dab; }
+    a.back { color: #f5c542; font-size: 13px; text-decoration: none; }
+    .real-panel { background: rgba(20, 23, 44, 0.9); border: 1px solid #2e3358; border-radius: 14px; padding: 16px 18px; margin-bottom: 24px; }
+    .real-panel h2 { font-size: 15px; color: #fff; margin-bottom: 10px; }
+    .real-panel h2 .count { color: #f5c542; }
+    .real-panel .none { color: #8f8dab; font-size: 13px; }
+    .real-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid #23274a; font-size: 13.5px; flex-wrap: wrap; }
+    .real-row:last-child { border-bottom: none; }
+    .real-row .who { flex: 1; min-width: 200px; }
+    .real-row .who b { color: #fff; }
+    .real-row .who .mono { font-family: monospace; color: #a8a6c0; font-size: 12px; }
+    .flagged { color: #ff8a8a; font-size: 11.5px; }
+    .ok-badge { color: #52e5a3; font-size: 12px; }
+    .warn-badge { color: #f5c542; font-size: 12px; }
+    .email-cell { font-size: 12px; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>📊 Registration Monitor</h1>
+    <p class="sub">Aletheia — To Uncover · Bangalore · ₹69 per person · auto-refreshes every 4s · <a class="back" href="/">register page →</a></p>
+
+    <div class="cards" id="statCards"></div>
+
+    <div class="real-panel" id="realPanel" style="margin-top:26px;">
+      <h2>🕵️ Real or fake? — payments waiting for YOUR check <span class="count" id="realCount"></span></h2>
+      <div id="realRows"><div class="none">Nothing to check — every payment so far is verified.</div></div>
+    </div>
+
+    <div class="toolbar" style="margin-top:26px;">
+      <input type="text" id="search" placeholder="Search name, email, ticket id…" />
+      <span class="auto-note" id="lastUpdate"></span>
+    </div>
+
+    <div class="modal-bg" id="refundModal">
+      <div class="modal">
+        <div id="refundAsk">
+          <h3>↩ Return money</h3>
+          <p class="hint" id="refundHint"></p>
+          <input id="refundVpa" placeholder="attendee UPI ID e.g. name@okhdfcbank" />
+          <div class="row">
+            <button class="v-btn v-ok" id="refundGo">Build refund QR →</button>
+            <button class="v-btn v-no" id="refundCancel">Cancel</button>
+          </div>
+        </div>
+        <div id="refundDone" style="display:none;">
+          <h3>💸 Send the refund now</h3>
+          <p class="hint">Their ticket is already invalidated. Scan this QR from <b>your</b> UPI app (or tap the link on mobile) to return <b id="refundAmt"></b> to <span class="vpa" id="refundVpaOut"></span>.</p>
+          <img id="refundQr" alt="Refund QR" />
+          <p><a id="refundLink" class="ok-badge" href="#">Open in UPI app →</a></p>
+          <div class="row"><button class="v-btn v-ok" id="refundClose">Done</button></div>
+        </div>
+      </div>
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Ticket ID</th><th>Name</th><th>Email</th><th>Persons</th>
+          <th>Amount</th><th>Status</th><th>Email</th><th>Check-in</th><th>Registered</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+
+  <script>
+    let all = [];
+    let query = "";
+    const KEY = new URLSearchParams(location.search).get("key") || "";
+    const authUrl = (u) => u + (u.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(KEY);
+
+    async function refresh() {
+      try {
+        const res = await fetch(authUrl("/api/admin/data"));
+        if (res.status === 401) {
+          document.getElementById("rows").innerHTML = `<tr><td colspan="9" class="empty">🔒 Wrong admin key. Add <code>?key=YOUR_ADMIN_KEY</code> to the URL.</td></tr>`;
+          return;
+        }
+        const data = await res.json();
+        all = data.registrations;
+        renderStats(data.stats);
+        renderRealPanel();
+        renderRows();
+        document.getElementById("lastUpdate").textContent = "updated " + new Date().toLocaleTimeString();
+      } catch (_) {}
+    }
+
+    function renderStats(s) {
+      const items = [
+        { label: "Registrations", value: s.total },
+        { label: "Paid", value: s.paid, cls: "green" },
+        { label: "Pending", value: s.pending },
+        { label: "Persons confirmed", value: s.personsConfirmed },
+        { label: "Verify payment", value: s.verifying, cls: s.verifying > 0 ? "" : "green" },
+        { label: "Collected", value: "₹" + s.amountCollected, cls: "green" },
+        { label: "Outstanding", value: "₹" + s.pendingAmount },
+        { label: "Confirmed real", value: all.filter(r => r.verifiedReal).length, cls: "green" },
+        { label: "Flagged fake", value: all.filter(r => r.fakeFlags).length },
+        { label: "Refunded", value: s.refunded || 0 },
+      ];
+      document.getElementById("statCards").innerHTML = items
+        .map((i) => `<div class="stat"><div class="label">${i.label}</div><div class="value ${i.cls || ""}">${i.value}</div></div>`)
+        .join("");
+    }
+
+    function statusBadge(st) {
+      const label = st === "verifying" ? "verify payment" : st === "refunded" ? "💸 refunded" : st;
+      return `<span class="badge ${st}">${label}</span>`;
+    }
+
+    function renderRealPanel() {
+      const awaiting = all.filter(r => r.status !== "paid" && r.status !== "cancelled");
+      const box = document.getElementById("realRows");
+      document.getElementById("realCount").textContent = awaiting.length ? "(" + awaiting.length + ")" : "";
+      if (!awaiting.length) {
+        box.innerHTML = '<div class="none">Nothing to check — every payment so far is verified real.</div>';
+        return;
+      }
+      box.innerHTML = awaiting.slice().reverse().map((r) => {
+        const flags = r.fakeFlags ? `<span class="flagged">⚠ flagged fake ${r.fakeFlags}×</span> ` : "";
+        const amt = "₹" + (r.expectedAmount || 0);
+        return `<div class="real-row">
+          <div class="who"><b>${esc(r.name)}</b> · ${esc(r.email)}<br /><span class="mono">${r.id}</span> · ${amt} · ${r.persons} person(s)</div>
+          ${flags}
+          <button class="v-btn v-ok" data-id="${r.id}">✓ REAL — money received</button>
+          <button class="v-btn v-no" data-id="${r.id}">✗ FAKE — no payment</button>
+        </div>`;
+      }).join("");
+    }
+
+    function renderRows() {
+      const q = query.toLowerCase();
+      const list = all.filter(
+        (r) =>
+          !q ||
+          r.name.toLowerCase().includes(q) ||
+          r.email.toLowerCase().includes(q) ||
+          r.id.toLowerCase().includes(q)
+      );
+      const tbody = document.getElementById("rows");
+      if (!list.length) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty">No registrations yet — share the poster QR to get started.</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = list
+        .slice()
+        .reverse()
+        .map(
+          (r) => `<tr>
+            <td class="id-cell">${r.id}</td>
+            <td>${esc(r.name)}</td>
+            <td>${esc(r.email)}</td>
+            <td>${r.persons}</td>
+            <td>${r.status === "refunded" ? `<span style="color:#c9a6ff">₹${(r.refund || {}).amount || r.amountPaid} ↩</span>` : r.status === "paid" ? "₹" + r.amountPaid : "₹" + (r.expectedAmount || 0)}${r.utr ? `<div class="id-cell">ref: ${esc(r.utr)}</div>` : ""}</td>
+            <td>${statusBadge(r.status)}${r.status === "paid" ? `<div class="verify-btns" style="margin-top:6px;"><button class="v-btn v-ref" data-refund="${r.id}">↩ Refund</button></div>` : ""}${r.status !== "paid" && r.status !== "cancelled" ? `<div class="verify-btns" style="margin-top:6px;"><button class="v-btn v-ok" data-id="${r.id}">✓ Money received</button><button class="v-btn v-no" data-id="${r.id}">✗ Not found</button></div>` : ""}</td>
+            <td class="email-cell">${r.status === "paid" ? (r.emailStatus === "sent" ? '<span class="ok-badge">✓ emailed</span>' : r.emailStatus === "failed" ? '<span class="flagged">⚠ email failed</span>' : '<span class="warn-badge">… sending</span>') : "—"}</td>
+            <td>${r.checkedIn >= r.persons
+              ? `<span class="badge checked-in">all in (${r.checkedIn})</span>`
+              : `<button class="scan-btn" data-id="${r.id}" ${r.status !== "paid" ? "disabled" : ""}>Check in (${r.checkedIn}/${r.persons})</button>`}
+            </td>
+            <td class="id-cell">${new Date(r.createdAt).toLocaleString()}</td>
+          </tr>`
+        )
+        .join("");
+    }
+
+    function esc(s) {
+      return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    }
+
+    document.getElementById("search").addEventListener("input", (e) => {
+      query = e.target.value;
+      renderRows();
+    });
+
+    document.getElementById("rows").addEventListener("click", tableAction);
+    document.getElementById("realRows").addEventListener("click", tableAction);
+
+    let refundId = null;
+    function openRefund(id) {
+      const r = all.find(x => x.id === id);
+      if (!r) return;
+      refundId = id;
+      document.getElementById("refundHint").innerHTML = `Return <b>₹${r.amountPaid || r.expectedAmount}</b> to <b>${esc(r.name)}</b> (${esc(r.email)}) for ticket ${id}.<br />Ask them for their UPI ID (they see it in any payment app).`;
+      document.getElementById("refundVpa").value = "";
+      document.getElementById("refundAsk").style.display = "";
+      document.getElementById("refundDone").style.display = "none";
+      document.getElementById("refundModal").classList.add("open");
+    }
+    document.getElementById("refundCancel").addEventListener("click", () => document.getElementById("refundModal").classList.remove("open"));
+    document.getElementById("refundClose").addEventListener("click", () => document.getElementById("refundModal").classList.remove("open"));
+    document.getElementById("refundGo").addEventListener("click", async () => {
+      const vpa = document.getElementById("refundVpa").value.trim();
+      const res = await fetch(authUrl("/api/admin/refund"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: refundId, vpa }),
+      });
+      const d = await res.json();
+      if (!res.ok) { alert(d.error || "Refund failed"); return; }
+      document.getElementById("refundAsk").style.display = "none";
+      document.getElementById("refundDone").style.display = "";
+      document.getElementById("refundAmt").textContent = "₹" + d.amount;
+      document.getElementById("refundVpaOut").textContent = d.vpa;
+      document.getElementById("refundQr").src = d.qrDataUrl;
+      const link = document.getElementById("refundLink");
+      link.href = d.upiUri;
+      refresh();
+    });
+
+    async function tableAction(e) {
+      const checkinBtn = e.target.closest(".scan-btn");
+      if (checkinBtn) {
+        if (checkinBtn.disabled) return;
+        checkinBtn.disabled = true;
+        await fetch(authUrl("/api/admin/checkin"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: checkinBtn.dataset.id }),
+        });
+        refresh();
+        return;
+      }
+
+      const ref = e.target.closest("[data-refund]");
+      if (ref) { openRefund(ref.dataset.refund); return; }
+
+      const ok = e.target.closest(".v-ok");
+      const no = e.target.closest(".v-no");
+      if (!ok && !no) return;
+      const btn = ok || no;
+      btn.disabled = true;
+      if (no && !confirm("Mark as NOT received? The attendee goes back to pending and can try again.")) {
+        btn.disabled = false;
+        return;
+      }
+      await fetch(authUrl(ok ? "/api/admin/verify" : "/api/admin/reject"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: btn.dataset.id }),
+      });
+      refresh();
+    });
+
+    refresh();
+    setInterval(refresh, 4000);
+  </script>
+</body>
+</html>
