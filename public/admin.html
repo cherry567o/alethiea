@@ -202,6 +202,7 @@
       const awaiting = all.filter(r => r.status !== "paid" && r.status !== "cancelled");
       const box = document.getElementById("realRows");
       const autoTag = (r) => r.paidSource === "auto-upi" ? ' <span class="ok-badge">🤖 auto</span>' : "";
+      const timeGap = (r) => r.txnTime && r.paidAt ? `<div style="color:#8f8dab; font-size:11px">txn ${new Date(r.txnTime).toLocaleTimeString()} · ${Math.max(0, Math.round((r.txnTime - r.createdAt)/60000))} min after booking</div>` : "";
       document.getElementById("realCount").textContent = awaiting.length ? "(" + awaiting.length + ")" : "";
       if (!awaiting.length) {
         box.innerHTML = '<div class="none">Nothing to check — every payment so far is verified real.</div>';
@@ -250,7 +251,7 @@
               ? `<span class="badge checked-in">all in (${r.checkedIn})</span>`
               : `<button class="scan-btn" data-id="${r.id}" ${r.status !== "paid" ? "disabled" : ""}>Check in (${r.checkedIn}/${r.persons})</button>`}
             </td>
-            <td class="id-cell">${new Date(r.createdAt).toLocaleString()}${r.paidAt ? `<div style="color:#52e5a3">accepted ${new Date(r.paidAt).toLocaleTimeString()}</div>` : ""}</td>
+            <td class="id-cell">${new Date(r.createdAt).toLocaleString()}${r.paidAt ? `<div style="color:#52e5a3">accepted ${new Date(r.paidAt).toLocaleTimeString()}</div>${timeGap(r)}` : ""}</td>
           </tr>`
         )
         .join("");

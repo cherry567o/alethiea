@@ -729,6 +729,37 @@ def api_admin_refund():
 # money arrives. We only auto-accept when the amount matches a pending booking and the
 # sender name (if present) matches too — anything ambiguous stays manual.
 
+def _parse_txn_time(text):
+    """Best-effort parse of the transaction time from bank/Paytm message text,
+    e.g. 'on 29-09-26 at 5:04PM' / '29-09-2026 17:04:35'. Returns ms or None.
+    Used to compare against the booking's creation time (a payment can't belong
+    to a booking created after the money arrived)."""
+    if not text:
+        return None
+    m = re.search(
+        r"\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})\D{0,12}?(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp]\.?[Mm]\.?)?",
+        text,
+    )
+    if not m:
+        return None
+    d, mo, y, hh, mm, ss, ampm = m.groups()
+    try:
+        y = int(y)
+        if y < 100:
+            y += 2000
+        hh, mm = int(hh), int(mm)
+        ss = int(ss or 0)
+        if ampm:
+            ampm = ampm.replace(".", "").upper()
+            if ampm == "PM" and hh < 12:
+                hh += 12
+            if ampm == "AM" and hh == 12:
+                hh = 0
+        return int(datetime(y, int(mo), int(d), hh, mm, ss).timestamp() * 1000)
+    except (ValueError, TypeError):
+        return None
+
+
 @app.post("/api/upi-webhook")
 def api_upi_webhook():
     body = request.get_json(silent=True) or {}
@@ -763,6 +794,7 @@ def api_upi_webhook():
     # their unique ticket code (ME-XXXXXX) while paying. The note rides on the
     # transaction and shows in Paytm + notifications, so it's exact even with
     # flat amounts. Names stay display-only.
+    txn_ms = _parse_txn_time(text)
     code = None
     m = re.search(r"\bME-[A-Z0-9]{6}\b", (text or "") + " " + name_hint, re.I)
     if m:
@@ -770,6 +802,12 @@ def api_upi_webhook():
         by_code = next((r for r in DB["registrations"] if r["id"] == code), None)
         if by_code and by_code["status"] == "pending":
             if by_code.get("expectedAmount") == amount:
+                # Time sanity: the transaction must not predate the booking
+                # (payments can't belong to tickets created later).
+                if txn_ms and by_code.get("createdAt") and txn_ms < by_code["createdAt"] - 120000:
+                    return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
+                                    "ticket": code, "txnTime": txn_ms,
+                                    "bookedAt": by_code["createdAt"]})
                 mark_paid(code, amount, source="auto-upi")
                 live = find_reg(code)
                 if live:
@@ -785,6 +823,10 @@ def api_upi_webhook():
     # several pending bookings at the same amount fall back to manual approval.
     cands = [r for r in DB["registrations"] if r["status"] == "pending" and
              r.get("expectedAmount", 0) == amount]
+    if len(cands) == 1 and txn_ms and cands[0].get("createdAt") and txn_ms < cands[0]["createdAt"] - 120000:
+        return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
+                        "ticket": cands[0]["id"], "txnTime": txn_ms,
+                        "bookedAt": cands[0]["createdAt"]})
 
     if len(cands) != 1:
         return jsonify({"ok": True, "accepted": False,
