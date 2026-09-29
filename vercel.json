@@ -1,7 +1,14 @@
 {
   "version": 2,
-  "rewrites": [{ "source": "/:path*", "destination": "/api/index.py?__vpath=:path*" }],
-  "functions": {
-    "api/index.py": { "maxDuration": 60, "includeFiles": "../public/**" }
-  }
+  "rewrites": [
+    { "source": "/start", "destination": "/start.html" },
+    { "source": "/register", "destination": "/index.html" },
+    { "source": "/door", "destination": "/door.html" },
+    { "source": "/admin", "destination": "/admin.html" },
+    { "source": "/pay/:pid", "destination": "/api/index.py?__vpath=pay/:pid" },
+    { "source": "/checkin/:pid", "destination": "/api/index.py?__vpath=checkin/:pid" },
+    { "source": "/api/:path*", "destination": "/api/index.py?__vpath=api/:path*" },
+    { "source": "/:path*", "destination": "/api/index.py?__vpath=:path*" }
+  ],
+  "functions": { "api/index.py": { "maxDuration": 60 } }
 }

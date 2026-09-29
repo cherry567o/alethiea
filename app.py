@@ -382,6 +382,8 @@ def serve_page(filename):
         return redirect(f"/{filename}")
 
 
+# On Vercel the friendly page URLs are rewritten to their static files at the
+# edge (vercel.json), so these handlers mainly serve the local/dev case.
 @app.get("/")
 def home():
     return serve_page("start.html")
