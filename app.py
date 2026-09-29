@@ -27,7 +27,7 @@ from email.message import EmailMessage
 from pathlib import Path
 
 import qrcode
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, jsonify, redirect, request, send_from_directory
 
 try:
     from dotenv import load_dotenv
@@ -373,29 +373,42 @@ def stripe_session_paid(session_id: str) -> bool:
 
 # ---------------- static pages ----------------
 
+def serve_page(filename):
+    """Serve a page file; if the function bundle lacks it (serverless), fall back
+    to the statically-served copy at the edge (public/ is a Vercel static dir)."""
+    try:
+        return send_from_directory(PUBLIC_DIR, filename)
+    except Exception:
+        return redirect(f"/{filename}")
+
+
 @app.get("/")
 def home():
-    return send_from_directory(PUBLIC_DIR, "start.html")
+    return serve_page("start.html")
 
 
 @app.get("/start")
 def start_page():
-    return send_from_directory(PUBLIC_DIR, "start.html")
+    return serve_page("start.html")
 
 
 @app.get("/register")
 def register_page():
-    return send_from_directory(PUBLIC_DIR, "index.html")
+    return serve_page("index.html")
 
 
 @app.get("/door")
 def door_page():
-    return send_from_directory(PUBLIC_DIR, "door.html")
+    return serve_page("door.html")
 
 
 @app.get("/pay/<reg_id>")
 def pay_page(reg_id):
-    return send_from_directory(PUBLIC_DIR, "index.html")
+    try:
+        return send_from_directory(PUBLIC_DIR, "index.html")
+    except Exception:
+        # carry the ticket id in ?t= — index.html's JS picks it up and shows the ticket
+        return redirect(f"/index.html?t={reg_id}")
 
 
 @app.get("/admin.html")

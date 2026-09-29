@@ -395,12 +395,15 @@
       checkStatus();
     });
 
-    // Direct /pay/:id visits (QR rescans, success_url redirect)
+    // Direct /pay/:id visits (QR rescans, success_url redirect) — also accepts /index.html?t=ID
+    // (the Vercel fallback redirect when the serverless bundle lacks the page file)
     (async () => {
       const m = location.pathname.match(/^\/pay\/(.+?)(\?|$)/);
-      if (!m) return;
+      const t = new URLSearchParams(location.search).get("t");
+      const regId = m ? m[1] : t;
+      if (!regId) return;
       try {
-        const res = await fetch("/api/status/" + m[1]);
+        const res = await fetch("/api/status/" + regId);
         const r = await res.json();
         if (r.error) {
           document.querySelector(".card").innerHTML =
