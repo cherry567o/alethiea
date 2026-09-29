@@ -201,6 +201,7 @@
     function renderRealPanel() {
       const awaiting = all.filter(r => r.status !== "paid" && r.status !== "cancelled");
       const box = document.getElementById("realRows");
+      const autoTag = (r) => r.paidSource === "auto-upi" ? ' <span class="ok-badge">🤖 auto</span>' : "";
       document.getElementById("realCount").textContent = awaiting.length ? "(" + awaiting.length + ")" : "";
       if (!awaiting.length) {
         box.innerHTML = '<div class="none">Nothing to check — every payment so far is verified real.</div>';
@@ -243,7 +244,7 @@
             <td>${esc(r.email)}</td>
             <td>${r.persons}</td>
             <td>${r.status === "refunded" ? `<span style="color:#c9a6ff">₹${(r.refund || {}).amount || r.amountPaid} ↩</span>` : r.status === "paid" ? "₹" + r.amountPaid : "₹" + (r.expectedAmount || 0)}${r.utr ? `<div class="id-cell">ref: ${esc(r.utr)}</div>` : ""}</td>
-            <td>${statusBadge(r.status)}${r.status === "paid" ? `<div class="verify-btns" style="margin-top:6px;"><button class="v-btn v-ref" data-refund="${r.id}">↩ Refund</button></div>` : ""}${r.status !== "paid" && r.status !== "cancelled" ? `<div class="verify-btns" style="margin-top:6px;"><button class="v-btn v-ok" data-id="${r.id}">✓ Money received</button><button class="v-btn v-no" data-id="${r.id}">✗ Not found</button></div>` : ""}</td>
+            <td>${statusBadge(r.status)}${r.status === "paid" ? autoTag(r) + `<div class="verify-btns" style="margin-top:6px;"><button class="v-btn v-ref" data-refund="${r.id}">↩ Refund</button></div>` : ""}${r.status !== "paid" && r.status !== "cancelled" ? `<div class="verify-btns" style="margin-top:6px;"><button class="v-btn v-ok" data-id="${r.id}">✓ Money received</button><button class="v-btn v-no" data-id="${r.id}">✗ Not found</button></div>` : ""}</td>
             <td class="email-cell">${r.status === "paid" ? (r.emailStatus === "sent" ? '<span class="ok-badge">✓ emailed</span>' : r.emailStatus === "failed" ? '<span class="flagged">⚠ email failed</span>' : '<span class="warn-badge">… sending</span>') : "—"}</td>
             <td>${r.checkedIn >= r.persons
               ? `<span class="badge checked-in">all in (${r.checkedIn})</span>`

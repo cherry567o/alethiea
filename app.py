@@ -238,6 +238,7 @@ def mark_paid(reg_id, paid_amount=None, source=""):
     reg["status"] = "paid"
     reg["amountPaid"] = amount
     reg["paidAt"] = int(time.time() * 1000)  # shown in admin as 'accepted <time>'
+    reg["paidSource"] = source  # 'auto-upi' shows as 🤖 in the admin panel
     payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
     if payment:
         payment.update({"status": "succeeded", "amount": amount, "paidAt": int(time.time() * 1000), "source": source})
@@ -697,6 +698,74 @@ def api_admin_refund():
     _save(DB)
     return jsonify({"ok": True, "status": "refunded", "upiUri": uri,
                     "qrDataUrl": make_qr(uri), "amount": amount, "vpa": vpa})
+
+
+# ---------------- auto-verify webhook (SMS/notification from your phone) ----------------
+# Your phone (via MacroDroid/Tasker) POSTs the raw bank/Paytm message here the moment
+# money arrives. We only auto-accept when the amount matches a pending booking and the
+# sender name (if present) matches too — anything ambiguous stays manual.
+
+@app.post("/api/upi-webhook")
+def api_upi_webhook():
+    body = request.get_json(silent=True) or {}
+    if body.get("key") != ADMIN_KEY:
+        return jsonify({"error": "unauthorized"}), 401
+    text = (body.get("text") or "").strip()
+    amount = body.get("amount")
+    name_hint = (body.get("name") or "").strip()
+    upi_ref = (body.get("ref") or "").strip()
+
+    # Parse amount out of the message: "Rs 69", "Rs.69.00", "INR 138", "₹69"
+    if not amount and text:
+        m = re.search(r"(?:rs\.?|inr|₹)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)", text, re.I)
+        if m:
+            amount = m.group(1).replace(",", "")
+    try:
+        amount = int(float(amount))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "could not parse amount from message"}), 400
+    if amount <= 0:
+        return jsonify({"ok": False, "error": "bad amount"}), 400
+
+    # Extract "...from <Name>" (Paytm push style) and a reference number, if present
+    if not name_hint:
+        m = re.search(r"\bfrom\s+([A-Za-z][A-Za-z .]{1,30}?)(?:\s+on\b|\.|,|$|-)", text, re.I)
+        if m:
+            name_hint = m.group(1).strip()
+    if not upi_ref:
+        m = re.search(r"(?:ref(?:\s*no)?\.?|upi\s*ref)\D{0,6}([0-9]{6,})", text, re.I)
+        if m:
+            upi_ref = m.group(1)
+
+    # Idempotency: same SMS forwarded twice must not double-issue
+    if upi_ref:
+        dup = next((r for r in DB["registrations"] if r.get("autoRef") == upi_ref), None)
+        if dup:
+            return jsonify({"ok": True, "accepted": False, "duplicate": True, "ticket": dup["id"]})
+
+    # Match: pending bookings with the exact paid amount; tighten by name when we have it
+    cands = [r for r in DB["registrations"] if r["status"] == "pending" and r.get("expectedAmount") == amount]
+    if name_hint:
+        n = name_hint.lower().replace(" ", "")
+        tight = [r for r in cands if n and n in r["name"].lower().replace(" ", "")]
+        if len(tight) == 1:
+            cands = tight
+        elif len(tight) > 1:
+            cands = tight  # still ambiguous, but report the tighter set
+
+    if len(cands) != 1:
+        return jsonify({"ok": True, "accepted": False,
+                        "reason": "ambiguous" if len(cands) > 1 else "no-matching-pending-booking",
+                        "amount": amount, "candidates": [r["id"] for r in cands]})
+
+    reg = cands[0]
+    mark_paid(reg["id"], amount, source="auto-upi")
+    live = find_reg(reg["id"])
+    if live:
+        live["autoRef"] = upi_ref or None
+        _save(DB)
+    return jsonify({"ok": True, "accepted": True, "ticket": reg["id"],
+                    "name": reg["name"], "amount": amount, "emailTo": reg["email"]})
 
 
 # ---------------- Razorpay webhook ----------------
