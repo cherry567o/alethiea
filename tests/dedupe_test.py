@@ -4,6 +4,7 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -111,6 +112,81 @@ class DedupeTests(unittest.TestCase):
     def test_validation_errors_intact(self):
         self.assertEqual(register("", name="").status_code, 400)
         self.assertEqual(register("not-an-email").status_code, 400)
+
+
+def rewind_first_booking(ms=601_000):
+    """Make the only booking look 10+ minutes old (past the payment window)."""
+    row = appmod.DB["registrations"][0]
+    row["createdAt"] -= ms
+    row["expiresAt"] = row["createdAt"] + appmod.PAYMENT_TIMEOUT_MS
+    return row
+
+
+def webhook(text):
+    return client.post("/api/upi-webhook", json={"key": appmod.ADMIN_KEY, "text": text})
+
+
+class ExpiryTests(unittest.TestCase):
+    def setUp(self):
+        appmod.DB = {"registrations": [], "payments": []}
+
+    def test_registration_carries_10min_expiry(self):
+        d = register("exp-fresh@example.com", persons=1).get_json()
+        self.assertAlmostEqual(d["expiresAt"], d["createdAt"] + 600_000, delta=1500)
+
+    def test_status_expires_stale_pending(self):
+        reg = register("exp-status@example.com", persons=1).get_json()
+        rewind_first_booking()
+        r = client.get(f"/api/status/{reg['id']}")
+        self.assertEqual(r.get_json()["status"], "expired")
+
+    def test_paid_booking_never_expires(self):
+        reg = register("exp-paid@example.com", persons=1).get_json()
+        appmod.mark_paid(reg["id"], source="test")
+        rewind_first_booking()
+        r = client.get(f"/api/status/{reg['id']}")
+        self.assertEqual(r.get_json()["status"], "paid")
+
+    def test_expired_booking_does_not_block_new_registration(self):
+        first = register("exp-again@example.com", persons=1).get_json()
+        rewind_first_booking()
+        second = register("exp-again@example.com", persons=2).get_json()
+        self.assertNotEqual(second["id"], first["id"])
+        self.assertNotIn("existing", second)
+
+    def test_webhook_revives_expired_booking_via_code(self):
+        """Money-safe core: late UPI payment still issues the ticket."""
+        reg = register("exp-late@example.com", persons=1).get_json()
+        rewind_first_booking()
+        txn = (datetime.now() - timedelta(seconds=30)).strftime("on %d-%m-%y at %I:%M%p")
+        resp = webhook(f"Received Rs 69 from Test User {txn} Ticket {reg['id']}")
+        d = resp.get_json()
+        self.assertTrue(d.get("accepted"), d)
+        self.assertEqual(d["ticket"], reg["id"])
+        self.assertEqual(client.get(f"/api/status/{reg['id']}").get_json()["status"], "paid")
+
+    def test_webhook_fallback_finds_expired_booking(self):
+        register("exp-fb@example.com", persons=1)
+        rewind_first_booking()
+        txn = (datetime.now() - timedelta(seconds=30)).strftime("on %d-%m-%y at %I:%M%p")
+        d = webhook(f"Rs 69 received from Test User {txn}").get_json()
+        self.assertTrue(d.get("accepted"), d)
+
+    def test_webhook_still_rejects_txn_before_expired_booking(self):
+        register("exp-early@example.com", persons=1)
+        rewind_first_booking()
+        old = (datetime.now() - timedelta(hours=1)).strftime("on %d-%m-%y at %I:%M%p")
+        d = webhook(f"Received Rs 69 from Test User {old}").get_json()
+        self.assertFalse(d.get("accepted"))
+        self.assertEqual(d.get("reason"), "txn-before-booking")  # code matched, but txn predates booking
+
+    def test_admin_data_counts_expired(self):
+        register("exp-count@example.com", persons=1)
+        rewind_first_booking()
+        client.get(f"/api/status/{appmod.DB['registrations'][0]['id']}")
+        import base64
+        req = client.get("/api/admin/data", headers={"x-admin-key": appmod.ADMIN_KEY})
+        self.assertEqual(req.get_json()["stats"]["expired"], 1)
 
 
 if __name__ == "__main__":

@@ -51,6 +51,7 @@
     .badge.verifying { background: #2a123c; color: #c98aff; border: 1px solid #4a1e6b; }
     .badge.checked-in { background: #12253c; color: #7db8ff; border: 1px solid #1e4a6b; }
     .badge.refunded { background: #1f1230; color: #c9a6ff; border: 1px solid #3d2a5c; }
+    .badge.expired { background: #2b1d12; color: #ff9d5c; border: 1px solid #6b441e; }
     .v-ref { background: #1f1230; border-color: #3d2a5c; color: #c9a6ff; }
     .modal-bg { display: none; position: fixed; inset: 0; background: rgba(4,6,15,.82); z-index: 50; align-items: center; justify-content: center; padding: 20px; }
     .modal-bg.open { display: flex; }
@@ -139,6 +140,7 @@
       <button class="ftab" data-f="paid">Accepted / paid</button>
       <button class="ftab" data-f="checked">Checked-in</button>
       <button class="ftab" data-f="refunded">Refunded</button>
+      <button class="ftab" data-f="expired">Expired</button>
     </div>
 
     <table>
@@ -187,6 +189,7 @@
         { label: "Confirmed real", value: all.filter(r => r.verifiedReal).length, cls: "green" },
         { label: "Flagged fake", value: all.filter(r => r.fakeFlags).length },
         { label: "Refunded", value: s.refunded || 0 },
+        { label: "Expired (10-min window)", value: s.expired || 0 },
       ];
       document.getElementById("statCards").innerHTML = items
         .map((i) => `<div class="stat"><div class="label">${i.label}</div><div class="value ${i.cls || ""}">${i.value}</div></div>`)
@@ -194,7 +197,7 @@
     }
 
     function statusBadge(st) {
-      const label = st === "verifying" ? "verify payment" : st === "refunded" ? "💸 refunded" : st;
+      const label = st === "verifying" ? "verify payment" : st === "refunded" ? "💸 refunded" : st === "expired" ? "⏳ expired" : st;
       return `<span class="badge ${st}">${label}</span>`;
     }
 
@@ -228,6 +231,7 @@
         if (filter === "paid") return r.status === "paid";
         if (filter === "checked") return r.checkedIn > 0 && r.status === "paid";
         if (filter === "refunded") return r.status === "refunded";
+        if (filter === "expired") return r.status === "expired";
         return true;
       });
       const tbody = document.getElementById("rows");

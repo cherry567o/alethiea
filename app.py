@@ -66,6 +66,10 @@ SMTP_USER = os.environ.get("SMTP_USER", "").strip()
 SMTP_PASS = os.environ.get("SMTP_PASS", "").strip()  # Gmail: use an App Password, not the login password
 SMTP_FROM = os.environ.get("SMTP_FROM", "").strip() or SMTP_USER
 PER_PERSON_PRICE = 69  # rupees
+# Pending bookings expire after 10 minutes without verified payment — keeps the
+# books clean. Money-safe: the auto-verify webhook revives an expired booking
+# when its payment actually arrives (late UPI notifications, slow confirmations).
+PAYMENT_TIMEOUT_MS = 10 * 60 * 1000
 CURRENCY = "INR"
 RZP_API = "https://api.razorpay.com/v1"
 
@@ -245,6 +249,22 @@ def upi_payment_uri(reg: dict) -> str:
 
 def find_reg(reg_id):
     return next((r for r in DB["registrations"] if r["id"] == reg_id), None)
+
+
+def _expire_stale_pendings():
+    """Flip pending bookings older than PAYMENT_TIMEOUT_MS to 'expired' so guests
+    register fresh instead of stacking stale rows. Called at the start of
+    register/status flows; the webhook can still revive them if money arrived."""
+    now = int(time.time() * 1000)
+    changed = False
+    for r in DB["registrations"]:
+        if r.get("status") == "pending" and now - r.get("createdAt", now) > PAYMENT_TIMEOUT_MS:
+            r["status"] = "expired"
+            r["expiredAt"] = now
+            changed = True
+    if changed:
+        _save(DB)
+    return changed
 
 
 def mark_paid(reg_id, paid_amount=None, source=""):
@@ -487,12 +507,14 @@ def api_register():
     if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
         return jsonify({"error": "Please enter a valid email."}), 400
 
+    _expire_stale_pendings()  # stale pendings must not block dedupe below
+
     # One pending booking per email: re-registering while a booking is still
     # pending returns the EXISTING ticket instead of piling up duplicates
     # (within 24h — families sharing an email can book next day or ask me).
     for prev in DB["registrations"]:
         if (prev.get("email") == email and prev.get("status") == "pending"
-                and int(time.time() * 1000) - prev.get("createdAt", 0) < 86_400_000):
+                and int(time.time() * 1000) - prev.get("createdAt", 0) < min(86_400_000, PAYMENT_TIMEOUT_MS)):
             if PAYMENT_MODE != "upi":
                 break  # other payment modes manage their own payment state
             payment = next((p for p in DB["payments"] if p["ref"] == prev["id"]), None)
@@ -515,9 +537,11 @@ def api_register():
             uri = payment["upiUri"]
             return jsonify({**prev, "paymentMode": "upi",
                             "qrDataUrl": make_qr(uri), "upiUri": uri, "upiId": UPI_ID,
+                            "expiresAt": prev.get("expiresAt") or prev.get("createdAt", 0) + PAYMENT_TIMEOUT_MS,
                             "existing": True, "demoMode": False})
 
     amount = persons * PER_PERSON_PRICE
+    now_ms = int(time.time() * 1000)
     reg = {
         "id": new_id(),
         "name": name,
@@ -528,7 +552,8 @@ def api_register():
         "amountPaid": 0,
         "status": "pending",
         "checkedIn": 0,
-        "createdAt": int(time.time() * 1000),  # ms — JS Date() expects milliseconds
+        "createdAt": now_ms,  # ms — JS Date() expects milliseconds
+        "expiresAt": now_ms + PAYMENT_TIMEOUT_MS,  # 10-min payment window
     }
 
     # ---- STRIPE MODE: attendee pays themselves on the same phone; auto-verified ----
@@ -634,6 +659,13 @@ def api_status(reg_id):
     reg = find_reg(reg_id)
     if not reg:
         return jsonify({"error": "Registration not found"}), 404
+
+    # Auto-expire: no verified payment within the 10-minute window → expired.
+    # (The webhook still revives expired bookings when real money arrives.)
+    if reg["status"] == "pending" and int(time.time() * 1000) - reg.get("createdAt", 0) > PAYMENT_TIMEOUT_MS:
+        reg["status"] = "expired"
+        reg["expiredAt"] = int(time.time() * 1000)
+        _save(DB)
 
     # Expose UPI claim state so the pay page can show the right panel
     payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
@@ -859,7 +891,7 @@ def api_upi_webhook():
     if m:
         code = m.group(0).upper()
         by_code = next((r for r in DB["registrations"] if r["id"] == code), None)
-        if by_code and by_code["status"] == "pending":
+        if by_code and by_code["status"] in ("pending", "expired"):
             if by_code.get("expectedAmount") == amount:
                 # Time sanity: the transaction must not predate the booking
                 # (payments can't belong to tickets created later).
@@ -887,7 +919,7 @@ def api_upi_webhook():
 
     # FALLBACK: exact advertised amount, only when unambiguous —
     # several pending bookings at the same amount fall back to manual approval.
-    cands = [r for r in DB["registrations"] if r["status"] == "pending" and
+    cands = [r for r in DB["registrations"] if r["status"] in ("pending", "expired") and
              r.get("expectedAmount", 0) == amount]
     if len(cands) == 1 and txn_ms and cands[0].get("createdAt") and txn_ms < cands[0]["createdAt"] - 120000:
         return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
@@ -970,6 +1002,7 @@ def api_admin_data():
         "verifying": len(verifying),
         "cancelled": len([r for r in DB["registrations"] if r["status"] == "cancelled"]),
         "refunded": len([r for r in DB["registrations"] if r["status"] == "refunded"]),
+        "expired": len([r for r in DB["registrations"] if r["status"] == "expired"]),
         "personsConfirmed": sum(r["persons"] for r in paid),
         "amountCollected": sum(r["amountPaid"] for r in paid),
         "pendingAmount": sum(r["expectedAmount"] for r in pending) + sum(r["expectedAmount"] for r in verifying),

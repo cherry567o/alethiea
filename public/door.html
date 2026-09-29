@@ -134,6 +134,7 @@
           const d = await r.json();
           if (d.error) showResult("bad", "Ticket not found: " + id);
           else if (d.status === "verifying" || d.status === "pending") showResult("warn", (d.name || "This ticket") + " hasn't completed payment (" + d.status + ").");
+          else if (d.status === "expired") showResult("warn", (d.name || "This ticket") + " never completed payment — the 10-minute window expired. If they say they paid, verify it in the admin panel first.");
           else showResult("bad", err.message);
         } catch (_) {
           showResult("bad", err.message);

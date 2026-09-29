@@ -218,6 +218,7 @@
         <a id="payOnPhone" class="hidden" href="#" style="display:block; width:100%; margin-top:12px; padding:13px; border:none; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:15px; font-weight:bold; text-align:center; text-decoration:none;">Pay ₹69 × persons on this phone →</a>
         <div id="upiHint" class="hidden" style="margin-top:10px; font-size:12px; color:#8f8dab; text-align:center; line-height:1.6;">Tap it — your UPI app (GPay / PhonePe / Paytm) should open with ₹<span id="hintAmt">69</span> pre-filled.<br />Nothing happens? You're probably on a laptop or inside WhatsApp — open this page in <b style="color:#cfcde4">Chrome on your phone</b> instead.</div>
 
+        <div id="expiryCountdown" class="hidden" style="margin-top:12px; padding:10px 12px; border-radius:10px; background:rgba(245,197,66,0.07); border:1px solid rgba(245,197,66,0.35); color:#f5c542; font-size:13px; text-align:center;"></div>
         <!-- UPI mode: scan with any UPI app, then confirm -->
         <div id="noteBox" style="margin-top:14px; padding:12px 14px; border-radius:10px; background:rgba(82,229,163,0.07); border:1px dashed rgba(82,229,163,0.4); text-align:center;">
           <div style="color:#52e5a3; font-weight:bold; font-size:13.5px;">📌 Your payment carries this code automatically</div>
@@ -260,6 +261,15 @@
     <div id="refundedView" class="hidden">
       <div class="closed-box" style="background:#12253c; border-color:#1e4a6b; color:#bfe0ff;"><b>Money returned.</b><br />This booking was refunded by the organizer and is cancelled.</div>
     </div>
+
+    <div id="expiredView" class="hidden">
+      <div class="closed-box" style="background:#2b1d12; border-color:#6b441e; color:#ffd9b3; line-height:1.7;">
+        <b>⏳ Payment window expired.</b><br />
+        This booking wasn't paid within 10 minutes, so it expired.<br />
+        <b>Already paid?</b> Keep this page open — if the money reached us, your ticket confirms here and by email automatically.<br />
+        Otherwise <a href="/register" style="color:#f5c542;">register again</a>.
+      </div>
+    </div>
   </div>
 
   <script>
@@ -267,6 +277,7 @@
     const PER_PERSON = 69;
     let current = null;
     let pollTimer = null;
+    let countdownTimer = null;
 
     const formView = document.getElementById("formView");
     const qrView = document.getElementById("qrView");
@@ -340,6 +351,7 @@
     function showQr(data) {
       formView.classList.add("hidden");
       qrView.classList.remove("hidden");
+      if (data.status === "expired") { showExpired(data); return; }
       document.getElementById("statusBadge").textContent = "AWAITING PAYMENT";
       document.getElementById("qrImg").src = data.qrDataUrl;
       document.getElementById("qrAmount").textContent = rs(data.expectedAmount || data.amount);
@@ -369,7 +381,38 @@
         if (nb) nb.classList.remove("hidden");
         document.getElementById("statusBadge").textContent = "ALREADY REGISTERED";
       }
+      if (data.expiresIn) startCountdown(data.expiresIn);
       startPolling();
+    }
+
+    function startCountdown(secondsLeft) {
+      const el = document.getElementById("expiryCountdown");
+      if (!el) return;
+      el.classList.remove("hidden");
+      if (countdownTimer) clearInterval(countdownTimer);
+      let left = Math.max(0, parseInt(secondsLeft, 10) || 0);
+      const tick = () => {
+        if (left <= 0) {
+          clearInterval(countdownTimer); countdownTimer = null;
+          el.innerHTML = "⏳ <b>Payment window ended.</b> If you already paid, stay on this page — we'll confirm it automatically. Otherwise register again.";
+          return;
+        }
+        const m = Math.floor(left / 60), s = left % 60;
+        el.innerHTML = "⏳ Complete payment within <b>" + m + ":" + String(s).padStart(2, "0") + "</b> — after that this booking expires (money already sent is still safe).";
+        left -= 1;
+      };
+      tick();
+      countdownTimer = setInterval(tick, 1000);
+    }
+
+    function showExpired(r) {
+      if (r) current = r;
+      qrView.classList.add("hidden");
+      paidView.classList.add("hidden");
+      formView.classList.add("hidden");
+      document.getElementById("expiredView").classList.remove("hidden");
+      if (countdownTimer) { clearInterval(countdownTimer); countdownTimer = null; }
+      startPolling(); // keep listening — a late payment still revives this ticket
     }
 
     function startPolling() {
@@ -395,6 +438,9 @@
             box.classList.remove("hidden");
           }
           showPaid(r);
+        } else if (r.status === "expired") {
+          current = r;
+          showExpired(r);
         } else { current = r; }
       } catch (_) {}
     }
