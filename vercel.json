@@ -2,6 +2,6 @@
   "version": 2,
   "rewrites": [{ "source": "/:path*", "destination": "/api/index.py?__vpath=:path*" }],
   "functions": {
-    "api/index.py": { "maxDuration": 60, "includeFiles": "public/**" }
+    "api/index.py": { "maxDuration": 60, "includeFiles": "../public/**" }
   }
 }
