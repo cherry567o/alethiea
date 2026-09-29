@@ -213,12 +213,26 @@ def new_id():
     return "ME-" + secrets.token_hex(3).upper()
 
 
+def _paise_for_id(reg_id: str) -> int:
+    """Stable 1–97 paise derived from the ticket id — makes every payment amount
+    globally unique (₹69.37 vs ₹69.52…) so webhook matching never needs names,
+    which collide (thousands of 'Rahul Sharma's exist on UPI). Names are for
+    display only; UTR remains the idempotency key."""
+    return int(hashlib.sha256(reg_id.encode()).hexdigest()[:6], 16) % 97 + 1
+
+
+def pay_amount(reg: dict) -> str:
+    """Exact payable amount with unique paise, e.g. '69.37'."""
+    return f"{reg['expectedAmount']}.{_paise_for_id(reg['id']):02d}"
+
+
 def upi_payment_uri(reg: dict) -> str:
-    """Standard UPI deep link — scanning opens GPay/PhonePe/Paytm with amount pre-filled."""
+    """Standard UPI deep link — scanning opens GPay/PhonePe/Paytm with the UNIQUE
+    amount pre-filled (base + ticket-specific paise)."""
     params = {
         "pa": UPI_ID,
         "pn": "Aletheia",
-        "am": str(reg["expectedAmount"]),
+        "am": pay_amount(reg),
         "cu": "INR",
         "tn": f"Ticket {reg['id']} {reg['name']}",
     }
@@ -455,6 +469,7 @@ def api_register():
     body = request.get_json(silent=True) or {}
     name = (body.get("name") or "").strip()[:80]
     email = (body.get("email") or "").strip().lower()[:120]
+    upi_name = (body.get("upiName") or "").strip()[:80]  # name shown on their UPI app — improves auto-match
     try:
         persons = max(1, min(20, int(body.get("persons", 1))))
     except (TypeError, ValueError):
@@ -469,6 +484,7 @@ def api_register():
     reg = {
         "id": new_id(),
         "name": name,
+        "upiName": upi_name,
         "email": email,
         "persons": persons,
         "expectedAmount": amount,
@@ -531,7 +547,8 @@ def api_register():
         })
         _save(DB)
         return jsonify({**reg, "qrDataUrl": make_qr(upi_payment_uri(reg)),
-                        "upiUri": upi_payment_uri(reg), "upiId": UPI_ID, "demoMode": False})
+                        "upiUri": upi_payment_uri(reg), "upiId": UPI_ID,
+                        "exactAmount": pay_amount(reg), "demoMode": False})
 
     if RZP_READY:
         try:
@@ -721,45 +738,36 @@ def api_upi_webhook():
         if m:
             amount = m.group(1).replace(",", "")
     try:
-        amount = int(float(amount))
+        amount = round(float(amount) * 100)  # keep paise — they identify the ticket
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "could not parse amount from message"}), 400
     if amount <= 0:
         return jsonify({"ok": False, "error": "bad amount"}), 400
 
-    # Extract "...from <Name>" (Paytm push style) and a reference number, if present
-    if not name_hint:
-        m = re.search(r"\bfrom\s+([A-Za-z][A-Za-z .]{1,30}?)(?:\s+on\b|\.|,|$|-)", text, re.I)
-        if m:
-            name_hint = m.group(1).strip()
-    if not upi_ref:
-        m = re.search(r"(?:ref(?:\s*no)?\.?|upi\s*ref)\D{0,6}([0-9]{6,})", text, re.I)
-        if m:
-            upi_ref = m.group(1)
+    # Name is display-only (names collide across UPI users). Paise in the amount
+    # are the real identifier — every ticket has its own unique paise suffix.
 
-    # Idempotency: same SMS forwarded twice must not double-issue
+    # Idempotency: same SMS forwarded twice must not double-issue; UTR = primary unique key
     if upi_ref:
         dup = next((r for r in DB["registrations"] if r.get("autoRef") == upi_ref), None)
         if dup:
             return jsonify({"ok": True, "accepted": False, "duplicate": True, "ticket": dup["id"]})
 
-    # Match: pending bookings with the exact paid amount; tighten by name when we have it
-    cands = [r for r in DB["registrations"] if r["status"] == "pending" and r.get("expectedAmount") == amount]
-    if name_hint:
-        n = name_hint.lower().replace(" ", "")
-        tight = [r for r in cands if n and n in r["name"].lower().replace(" ", "")]
-        if len(tight) == 1:
-            cands = tight
-        elif len(tight) > 1:
-            cands = tight  # still ambiguous, but report the tighter set
+    # PRIMARY match: exact paise (amount*100). Every ticket gets unique paise,
+    # so this is globally unambiguous regardless of the payer's name.
+    cands = [r for r in DB["registrations"] if r["status"] == "pending" and
+             r.get("expectedAmount", 0) * 100 + _paise_for_id(r["id"]) == amount]
 
     if len(cands) != 1:
+        # With unique paise this should be impossible while a booking is pending;
+        # anything else (expired/refunded/paid ticket paise reused, wrong amount)
+        # lands here for manual handling.
         return jsonify({"ok": True, "accepted": False,
                         "reason": "ambiguous" if len(cands) > 1 else "no-matching-pending-booking",
                         "amount": amount, "candidates": [r["id"] for r in cands]})
 
     reg = cands[0]
-    mark_paid(reg["id"], amount, source="auto-upi")
+    mark_paid(reg["id"], amount / 100, source="auto-upi")
     live = find_reg(reg["id"])
     if live:
         live["autoRef"] = upi_ref or None

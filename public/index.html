@@ -180,6 +180,9 @@
         <label for="email">Email (one person)</label>
         <input type="email" id="email" name="email" required placeholder="you@example.com" />
 
+        <label for="upiName">Name on your UPI app <span style="color:#6f6d8a">(optional — for display in case we need to reach you)</span></label>
+        <input type="text" id="upiName" name="upiName" placeholder="e.g. the name GPay/PhonePe/Paytm shows when you pay" />
+
         <label for="persons">No. of persons</label>
         <div class="persons-row">
           <input type="number" id="persons" name="persons" min="1" max="20" value="1" required />
@@ -224,7 +227,7 @@
           <br />
           <button id="demoPayBtn">Simulate successful payment</button>
         </div>
-        <p class="muted">This page checks automatically. Once paid, your entry ticket appears here.<br />Keep this page open.</p>
+        <p class="muted">This page checks automatically. Once paid, your entry ticket appears here.<br />Your amount is <b style="color:#f5c542" id="exactAmt">₹69</b> — pay <b style="color:#f5c542">exactly this</b> (the extra paise are your ticket's unique ID, so we can confirm you instantly without asking anyone's name).</p>
         <a href="/register" class="back">← Back to form</a>
       </div>
     </div>
@@ -300,6 +303,7 @@
       const payload = {
         name: document.getElementById("name").value.trim(),
         email: document.getElementById("email").value.trim(),
+        upiName: document.getElementById("upiName").value.trim(),
         persons: parseInt(document.getElementById("persons").value, 10) || 1,
       };
 
@@ -326,7 +330,10 @@
       qrView.classList.remove("hidden");
       document.getElementById("statusBadge").textContent = "AWAITING PAYMENT";
       document.getElementById("qrImg").src = data.qrDataUrl;
-      document.getElementById("qrAmount").textContent = rs(data.expectedAmount || data.amount);
+      const exact = data.exactAmount || (data.expectedAmount || data.amount);
+      document.getElementById("qrAmount").textContent = rs(exact);
+      const ea = document.getElementById("exactAmt");
+      if (ea) ea.textContent = rs(exact);
       document.getElementById("personCount").textContent =
         data.persons + (data.persons === 1 ? " person" : " persons");
       document.getElementById("ticketId").textContent = data.id;
