@@ -487,6 +487,36 @@ def api_register():
     if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
         return jsonify({"error": "Please enter a valid email."}), 400
 
+    # One pending booking per email: re-registering while a booking is still
+    # pending returns the EXISTING ticket instead of piling up duplicates
+    # (within 24h — families sharing an email can book next day or ask me).
+    for prev in DB["registrations"]:
+        if (prev.get("email") == email and prev.get("status") == "pending"
+                and int(time.time() * 1000) - prev.get("createdAt", 0) < 86_400_000):
+            if PAYMENT_MODE != "upi":
+                break  # other payment modes manage their own payment state
+            payment = next((p for p in DB["payments"] if p["ref"] == prev["id"]), None)
+            if not payment:  # self-heal: pending row without a payment record
+                payment = {
+                    "ref": prev["id"], "upiId": UPI_ID,
+                    "upiUri": upi_payment_uri(prev),
+                    "amount": prev.get("expectedAmount", PER_PERSON_PRICE),
+                    "currency": CURRENCY, "provider": "upi", "status": "pending",
+                    "utr": "", "claimedAt": None, "createdAt": int(time.time() * 1000),
+                }
+                DB["payments"].append(payment)
+            if not payment.get("upiUri") or (UPI_ID and payment.get("upiId") != UPI_ID):
+                # self-heal: bookings minted before a VPA fix kept QR-deep-linking
+                # to the dead old ID (the @ybl "Unable to scan QR" errors) — regenerate.
+                payment["upiUri"] = upi_payment_uri(prev)
+                payment["upiId"] = UPI_ID
+            prev.setdefault("paymentMode", "upi")
+            _save(DB)
+            uri = payment["upiUri"]
+            return jsonify({**prev, "paymentMode": "upi",
+                            "qrDataUrl": make_qr(uri), "upiUri": uri, "upiId": UPI_ID,
+                            "existing": True, "demoMode": False})
+
     amount = persons * PER_PERSON_PRICE
     reg = {
         "id": new_id(),

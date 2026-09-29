@@ -224,6 +224,9 @@
           <div style="font-family:monospace; font-size:20px; letter-spacing:2px; color:#fff; margin:8px 0; font-weight:bold;" id="noteCode">ME-XXXXXX</div>
           <div style="font-size:12px; color:#9fe8c6; line-height:1.6;">The QR pre-fills the payment note with this code — just pay <b>without changing the note</b>.<br />It reaches us with your money, so we confirm you in seconds.</div>
         </div>
+        <div id="existingBox" class="hidden" style="margin-top:14px; padding:12px 14px; border-radius:10px; background:rgba(245,197,66,0.08); border:1px solid rgba(245,197,66,0.45); color:#f5c542; font-size:13px; text-align:center; line-height:1.6;">
+          ✅ You already have a booking with this email — showing it again (no duplicate created).<br />Waiting for payment confirmation… <b>please wait 2 minutes</b> on this screen: your ticket appears automatically once we verify the payment.
+        </div>
         <div id="confirmBox" class="hidden" style="margin-top:14px;">
           <div class="confirmed-box">Paid? Great — the organizer is confirming it in their UPI app.<br /><b>Your ticket then appears on this screen automatically and is sent to your email.</b><br />No need to report anything — we can see every payment ourselves.</div>
         </div>
@@ -233,6 +236,9 @@
           <button id="demoPayBtn">Simulate successful payment</button>
         </div>
         <p class="muted">This page checks automatically. Once paid, your entry ticket appears here.<br />Keep this page open.</p>
+        <div id="batteryNote" class="hidden" style="margin-top:10px; padding:10px 12px; border-radius:10px; background:rgba(143,141,171,0.08); border:1px solid rgba(143,141,171,0.25); color:#8f8dab; font-size:12px; text-align:center; line-height:1.6;">
+          🔋 If this page stops checking (screen off / app in background), don't fill the form again — just <b>refresh this page</b> when you return. Your booking is saved.
+        </div>
         <a href="/register" class="back">← Back to form</a>
       </div>
     </div>
@@ -348,6 +354,8 @@
         payBtn.textContent = "Pay " + rs(data.expectedAmount) + " on this phone →";
         document.getElementById("hintAmt").textContent = data.expectedAmount;
         document.getElementById("upiHint").classList.remove("hidden");
+        const battery = document.getElementById("batteryNote");
+        if (battery) battery.classList.remove("hidden");
       } else if (data.paymentMode === "stripe" && data.checkoutUrl) {
         payBtn.href = data.checkoutUrl;
         payBtn.classList.remove("hidden");
@@ -356,6 +364,11 @@
         payBtn.classList.add("hidden");
       }
       if (data.demoMode) document.getElementById("demoBox").classList.remove("hidden");
+      if (data.existing) {
+        const nb = document.getElementById("existingBox");
+        if (nb) nb.classList.remove("hidden");
+        document.getElementById("statusBadge").textContent = "ALREADY REGISTERED";
+      }
       startPolling();
     }
 
