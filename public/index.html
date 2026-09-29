@@ -219,6 +219,11 @@
         <div id="upiHint" class="hidden" style="margin-top:10px; font-size:12px; color:#8f8dab; text-align:center; line-height:1.6;">Tap it — your UPI app (GPay / PhonePe / Paytm) should open with ₹<span id="hintAmt">69</span> pre-filled.<br />Nothing happens? You're probably on a laptop or inside WhatsApp — open this page in <b style="color:#cfcde4">Chrome on your phone</b> instead.</div>
 
         <!-- UPI mode: scan with any UPI app, then confirm -->
+        <div id="noteBox" style="margin-top:14px; padding:12px 14px; border-radius:10px; background:rgba(82,229,163,0.07); border:1px dashed rgba(82,229,163,0.4); text-align:center;">
+          <div style="color:#52e5a3; font-weight:bold; font-size:13.5px;">📌 IMPORTANT — while paying, add this note</div>
+          <div style="font-family:monospace; font-size:20px; letter-spacing:2px; color:#fff; margin:8px 0; font-weight:bold;" id="noteCode">ME-XXXXXX</div>
+          <div style="font-size:12px; color:#9fe8c6; line-height:1.6;">In GPay/PhonePe/Paytm, before hitting Pay, tap <b>“Add a note”</b> and type the code above.<br />It reaches us with your money — that's how we confirm you in seconds.</div>
+        </div>
         <div id="confirmBox" class="hidden" style="margin-top:14px;">
           <div class="confirmed-box">Paid? Great — the organizer is confirming it in their UPI app.<br /><b>Your ticket then appears on this screen automatically and is sent to your email.</b><br />No need to report anything — we can see every payment ourselves.</div>
         </div>
@@ -334,6 +339,7 @@
       document.getElementById("personCount").textContent =
         data.persons + (data.persons === 1 ? " person" : " persons");
       document.getElementById("ticketId").textContent = data.id;
+      document.getElementById("noteCode").textContent = data.id;
       const payBtn = document.getElementById("payOnPhone");
       if (data.paymentMode === "upi" && data.upiUri) {
         payBtn.href = data.upiUri;

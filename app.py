@@ -744,7 +744,29 @@ def api_upi_webhook():
         if dup:
             return jsonify({"ok": True, "accepted": False, "duplicate": True, "ticket": dup["id"]})
 
-    # Match: exact advertised amount. Auto-accept ONLY when unambiguous —
+    # PRIMARY match: the payer's own payment NOTE — each guest is told to attach
+    # their unique ticket code (ME-XXXXXX) while paying. The note rides on the
+    # transaction and shows in Paytm + notifications, so it's exact even with
+    # flat amounts. Names stay display-only.
+    code = None
+    m = re.search(r"\bME-[A-Z0-9]{6}\b", (text or "") + " " + name_hint, re.I)
+    if m:
+        code = m.group(0).upper()
+        by_code = next((r for r in DB["registrations"] if r["id"] == code), None)
+        if by_code and by_code["status"] == "pending":
+            if by_code.get("expectedAmount") == amount:
+                mark_paid(code, amount, source="auto-upi")
+                live = find_reg(code)
+                if live:
+                    live["autoRef"] = upi_ref or None
+                    _save(DB)
+                return jsonify({"ok": True, "accepted": True, "ticket": code,
+                                "name": by_code["name"], "amount": amount, "emailTo": by_code["email"]})
+            return jsonify({"ok": True, "accepted": False,
+                            "reason": "amount-mismatch", "ticket": code,
+                            "expected": by_code.get("expectedAmount"), "amount": amount})
+
+    # FALLBACK: exact advertised amount, only when unambiguous —
     # several pending bookings at the same amount fall back to manual approval.
     cands = [r for r in DB["registrations"] if r["status"] == "pending" and
              r.get("expectedAmount", 0) == amount]
