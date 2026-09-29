@@ -729,6 +729,23 @@ def api_admin_refund():
 # money arrives. We only auto-accept when the amount matches a pending booking and the
 # sender name (if present) matches too — anything ambiguous stays manual.
 
+def _name_consistent(sender_name: str, reg: dict) -> bool:
+    """Soft check: the payer's UPI display name should share at least one word
+    (>=2 letters) with the registered name or the self-reported UPI name.
+    Names collide across people, so this is a fraud SIGNAL, not an identifier:
+    no overlap at all => suspicious => leave for manual review instead of
+    auto-accept. Missing/blank sender names never block (can't compare)."""
+    if not sender_name:
+        return True
+    stop = {"miss", "mrs", "mr", "ms", "dr"}
+    toks = lambda s: {w for w in re.findall(r"[a-z]+", (s or "").lower()) if len(w) >= 2 and w not in stop}
+    sender = toks(sender_name)
+    if not sender:
+        return True
+    known = toks(reg.get("name")) | toks(reg.get("upiName"))
+    return bool(sender & known)
+
+
 def _parse_txn_time(text):
     """Best-effort parse of the transaction time from bank/Paytm message text,
     e.g. 'on 29-09-26 at 5:04PM' / '29-09-2026 17:04:35'. Returns ms or None.
@@ -794,6 +811,18 @@ def api_upi_webhook():
     # their unique ticket code (ME-XXXXXX) while paying. The note rides on the
     # transaction and shows in Paytm + notifications, so it's exact even with
     # flat amounts. Names stay display-only.
+    # Sender name: accept it from the JSON field if provided, otherwise pull it
+    # out of the message text ("... from Varshini Raj on ..."). Display + soft check.
+    if not name_hint and text:
+        m2 = re.search(
+            r"\bfrom\s+([A-Za-z][A-Za-z .]{1,30}?)" 
+            r"(?=\s+(?:on|note|ref|with|via|upi|using|for)\b|[.,]|$)",
+            text,
+            re.I,
+        )
+        if m2:
+            name_hint = m2.group(1).strip()
+
     txn_ms = _parse_txn_time(text)
     code = None
     m = re.search(r"\bME-[A-Z0-9]{6}\b", (text or "") + " " + name_hint, re.I)
@@ -808,6 +837,13 @@ def api_upi_webhook():
                     return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
                                     "ticket": code, "txnTime": txn_ms,
                                     "bookedAt": by_code["createdAt"]})
+                # Name-consistency signal: ticket code matched, but if the payer's
+                # UPI name shares NO word with the registered/UPI name, don't blind-
+                # accept — a copied note+amount would otherwise pass. Manual review.
+                if not _name_consistent(name_hint, by_code):
+                    return jsonify({"ok": True, "accepted": False, "reason": "name-mismatch",
+                                    "ticket": code, "sender": name_hint,
+                                    "registered": by_code["name"]})
                 mark_paid(code, amount, source="auto-upi")
                 live = find_reg(code)
                 if live:
@@ -827,6 +863,10 @@ def api_upi_webhook():
         return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
                         "ticket": cands[0]["id"], "txnTime": txn_ms,
                         "bookedAt": cands[0]["createdAt"]})
+    if len(cands) == 1 and not _name_consistent(name_hint, cands[0]):
+        return jsonify({"ok": True, "accepted": False, "reason": "name-mismatch",
+                        "ticket": cands[0]["id"], "sender": name_hint,
+                        "registered": cands[0]["name"]})
 
     if len(cands) != 1:
         return jsonify({"ok": True, "accepted": False,
