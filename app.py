@@ -842,7 +842,10 @@ def _parse_txn_time(text):
 @app.post("/api/upi-webhook")
 def api_upi_webhook():
     body = request.get_json(silent=True) or {}
-    if body.get("key") != ADMIN_KEY:
+    # Key can come in the JSON body OR in the URL (?key=...) — MacroDroid's URL
+    # field is easier to paste into than a JSON body, so accept both.
+    supplied = body.get("key") or request.args.get("key", "")
+    if supplied != ADMIN_KEY:
         return jsonify({"error": "unauthorized"}), 401
     text = (body.get("text") or "").strip()
     amount = body.get("amount")

@@ -16,14 +16,16 @@ accept manually in the admin panel — safety first.
    - Text content: contains `received`
 4. **Action:** *Tasks → HTTP Request*
    - Request type: **POST (JSON body)**
-   - URL:
+   - URL (key already inside, nothing else to edit):
      ```
-     https://aletheia-event.vercel.app/api/upi-webhook
+     https://aletheia-event.vercel.app/api/upi-webhook?key=ME0d0992548359092c3e511790588738
      ```
    - JSON body (paste exactly):
      ```json
-     {"key":"ME0d0992548359092c3e511790588738","text":"{notification}","app":"paytm"}
+     {"text":"{notification}","app":"paytm"}
      ```
+     Pick `{notification}` via the magic-text button (Notification →
+     Notification Text). Old style (key inside the body) still works too.
      (`{notification}` is a MacroDroid magic-text placeholder — pick it via the
      ✓/{ } button so the app inserts the real notification text.)
 5. Save the macro → enable it. Send yourself ₹1 from a friend as a test —

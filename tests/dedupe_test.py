@@ -126,6 +126,11 @@ def webhook(text):
     return client.post("/api/upi-webhook", json={"key": appmod.ADMIN_KEY, "text": text})
 
 
+def webhook_url_key(text):
+    """MacroDroid-style: the key rides in the URL, body only carries the text."""
+    return client.post(f"/api/upi-webhook?key={appmod.ADMIN_KEY}", json={"text": text})
+
+
 class ExpiryTests(unittest.TestCase):
     def setUp(self):
         appmod.DB = {"registrations": [], "payments": []}
@@ -179,6 +184,16 @@ class ExpiryTests(unittest.TestCase):
         d = webhook(f"Received Rs 69 from Test User {old}").get_json()
         self.assertFalse(d.get("accepted"))
         self.assertEqual(d.get("reason"), "txn-before-booking")  # code matched, but txn predates booking
+
+    def test_webhook_accepts_key_in_url(self):
+        """The MacroDroid URL style: ?key= in the URL, body has just the text."""
+        reg = register("urlkey@example.com", persons=1).get_json()
+        d = webhook_url_key(f"Received Rs 69 from Test User Ticket {reg['id']}").get_json()
+        self.assertTrue(d.get("accepted"), d)
+
+    def test_webhook_rejects_wrong_key_in_url(self):
+        r = client.post("/api/upi-webhook?key=WRONGKEY", json={"text": "Received Rs 69"})
+        self.assertEqual(r.status_code, 401)
 
     def test_admin_data_counts_expired(self):
         register("exp-count@example.com", persons=1)
