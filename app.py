@@ -57,7 +57,7 @@ if PORT <= 0:  # some environments export PORT=0 — pick our predictable defaul
 PUBLIC_BASE_URL = os.environ.get("PUBLIC_BASE_URL", "").rstrip("/")
 # Booking deadline — registrations auto-close after this date (end of day).
 # Override or clear it by setting REG_DEADLINE in .env (e.g. REG_DEADLINE=2026-12-01).
-REG_DEADLINE = os.environ.get("REG_DEADLINE", "2026-11-10").strip()
+REG_DEADLINE = os.environ.get("REG_DEADLINE", "2026-11-20").strip()  # day before the event
 
 # ---- outbound email (ticket delivery) — plain SMTP, e.g. Gmail with an app password ----
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
@@ -315,7 +315,7 @@ def send_ticket_email(reg: dict):
             f"Reopen / re-show your entry ticket QR any time:\n{ticket_url}\n\n"
             f"Show the QR at the entrance - each scan counts one person.\n"
             f"Your door PIN: {reg.get('pin', '----')} (keep it private - we will ask for it at the door)\n"
-            f"Saturday, 31 October 2026, 6:30 to 8:00 PM (~1.5 hours)\n"
+            f"Saturday, 21 November 2026, 6:30 to 8:00 PM (~1.5 hours)\n"
             f"Venue: to be announced, Bangalore (we will message you)\n"
             f"See you there.\n"
         )
