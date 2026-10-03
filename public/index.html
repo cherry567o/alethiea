@@ -227,9 +227,33 @@
         <div class="qr-frame"><img id="qrImg" alt="Payment QR code" /></div>
         <div class="ticket-id" id="ticketId"></div>
 
-        <!-- Same-phone payment: no scanning, no second phone -->
-        <a id="payOnPhone" class="hidden" href="#" style="display:block; width:100%; margin-top:12px; padding:13px; border:none; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:15px; font-weight:bold; text-align:center; text-decoration:none;">Pay ₹69 × persons on this phone →</a>
-        <div id="upiHint" class="hidden" style="margin-top:10px; font-size:12px; color:#8f8dab; text-align:center; line-height:1.6;">Tap it — your UPI app (GPay / PhonePe / Paytm) should open with ₹<span id="hintAmt">69</span> pre-filled.<br />Nothing happens? You're probably on a laptop or inside WhatsApp — open this page in <b style="color:#cfcde4">Chrome on your phone</b> instead.</div>
+        <!-- Same-phone payment: per-app deep links (PhonePe pre-fill fix) -->
+        <div id="payWarn" class="hidden" style="margin-top:12px; padding:9px 12px; border-radius:10px; background:rgba(245,120,66,0.08); border:1px solid rgba(245,140,66,0.4); color:#ffb38a; font-size:12px; text-align:center; line-height:1.6;">⚠️ <b>Don't screenshot the QR</b> — PhonePe blocks QR images from gallery. And <b>stop screen recording</b> before paying: UPI apps refuse the PIN screen while recording.</div>
+        <div id="appBtns" style="display:none; grid-template-columns:1fr 1fr; gap:8px; margin-top:12px;">
+          <a id="payPhonePe" href="#" style="display:block; padding:13px 8px; border-radius:10px; background:#3a1d5c; border:1px solid #6b3fa0; color:#e6d6ff; font-size:14px; font-weight:bold; text-align:center; text-decoration:none;">🟣 Pay with PhonePe</a>
+          <a id="payGPay" href="#" style="display:block; padding:13px 8px; border-radius:10px; background:#1d2a5c; border:1px solid #3f5ab0; color:#d6e0ff; font-size:14px; font-weight:bold; text-align:center; text-decoration:none;">🔵 Pay with GPay</a>
+          <a id="payPaytm" href="#" style="display:block; padding:13px 8px; border-radius:10px; background:#0d2b3e; border:1px solid #1e6b8a; color:#bfe6ff; font-size:14px; font-weight:bold; text-align:center; text-decoration:none;">🔷 Pay with Paytm</a>
+          <a id="payOnPhone" href="#" style="display:block; padding:13px 8px; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:14px; font-weight:bold; text-align:center; text-decoration:none;">⚙️ Other UPI app</a>
+        </div>
+        <a id="payOnPhoneSolo" href="#" style="display:none; width:100%; margin-top:12px; padding:13px; border:none; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:15px; font-weight:bold; text-align:center; text-decoration:none;">Pay ₹69 × persons on this phone →</a>
+        <div id="upiHint" class="hidden" style="margin-top:10px; font-size:12px; color:#8f8dab; text-align:center; line-height:1.6;">Tap an app — it opens with ₹<span id="hintAmt">69</span> and your ticket note pre-filled. Didn't open, or opened without the amount? Tap the button again, or use <b style="color:#cfcde4">Pay manually</b> below. On a laptop? Open this page in <b style="color:#cfcde4">Chrome on your phone</b>.</div>
+        <div id="manualPay" class="hidden" style="margin-top:12px; border:1px dashed rgba(143,141,171,0.4); border-radius:10px; padding:12px 14px; background:rgba(143,141,171,0.05);">
+          <div style="font-size:13px; font-weight:bold; color:#cfcde4; text-align:center;">Pay manually — works every time</div>
+          <div style="display:flex; gap:6px; margin-top:10px; flex-wrap:wrap; justify-content:center;">
+            <button type="button" class="copyBtn" data-copy="vpa" style="flex:1; min-width:130px; padding:9px 8px; border-radius:8px; border:1px solid #3a3a55; background:#1a1a2e; color:#e8e6f0; font-size:12.5px; cursor:pointer;">📋 Copy UPI ID</button>
+            <button type="button" class="copyBtn" data-copy="amt" style="flex:1; min-width:110px; padding:9px 8px; border-radius:8px; border:1px solid #3a3a55; background:#1a1a2e; color:#e8e6f0; font-size:12.5px; cursor:pointer;">📋 Copy amount</button>
+            <button type="button" class="copyBtn" data-copy="note" style="flex:1; min-width:120px; padding:9px 8px; border-radius:8px; border:1px solid #3a3a55; background:#1a1a2e; color:#e8e6f0; font-size:12.5px; cursor:pointer;">📋 Copy note</button>
+          </div>
+          <div style="font-family:monospace; font-size:12px; color:#9fe8c6; text-align:center; margin-top:8px; line-height:1.7;">UPI ID: <b id="manVpa">7795498451@ptyes</b> · <b id="manAmt">₹69</b><br />Note: <b id="manNote">Ticket ME-XXXXXX</b></div>
+          <details style="margin-top:10px; font-size:12px; color:#8f8dab; line-height:1.7;">
+            <summary style="cursor:pointer; color:#cfcde4; font-weight:bold;">PhonePe steps (amount not pre-filled? do this)</summary>
+            1. PhonePe → <b>To Mobile Number</b> → enter <b class="manNum">7795498451</b><br />2. Name shows <b>Sahana G</b> ✓ → amount <b class="manAmt2">₹69</b><br />3. In the note box, paste the <b>note</b> you copied above — it must contain your ticket code<br />4. Pay → UPI PIN → done ✅
+          </details>
+          <details style="margin-top:6px; font-size:12px; color:#8f8dab; line-height:1.7;">
+            <summary style="cursor:pointer; color:#cfcde4; font-weight:bold;">Paytm steps</summary>
+            1. Paytm → <b>Scan &amp; Pay</b> → scan the QR above with the <b>camera</b> (never from gallery)<br />2. Or: <b>To Mobile Number</b> → <b class="manNum">7795498451</b> → <b class="manAmt2">₹69</b><br />3. Paste the <b>note</b> (must contain your ticket code) → Pay ✅
+          </details>
+        </div>
 
         <div id="expiryCountdown" class="hidden" style="margin-top:12px; padding:10px 12px; border-radius:10px; background:rgba(245,197,66,0.07); border:1px solid rgba(245,197,66,0.35); color:#f5c542; font-size:13px; text-align:center;"></div>
         <!-- UPI mode: scan with any UPI app, then confirm -->
@@ -383,20 +407,42 @@
       document.getElementById("ticketId").textContent = data.id;
       document.getElementById("noteCode").textContent = data.id;
       const payBtn = document.getElementById("payOnPhone");
+      const soloBtn = document.getElementById("payOnPhoneSolo");
+      const grid = document.getElementById("appBtns");
       if (data.paymentMode === "upi" && data.upiUri) {
-        payBtn.href = data.upiUri;
-        payBtn.classList.remove("hidden");
-        payBtn.textContent = "Pay " + rs(data.expectedAmount) + " on this phone →";
+        grid.style.display = "grid";
+        soloBtn.style.display = "none";
+        // Same params (pa/am/tn), app-specific schemes — PhonePe drops the
+        // pre-fill on generic upi:// links from Chrome but honors its own.
+        const uriFor = (scheme) => data.upiUri.replace(/^upi:\/\/pay/, scheme);
+        payBtn.href = data.upiUri; // generic: OS picks the UPI app
+        document.getElementById("payPhonePe").href = uriFor("phonepe://pay");
+        document.getElementById("payGPay").href = uriFor("tez://upi/pay");
+        document.getElementById("payPaytm").href = uriFor("paytmmp://pay");
         document.getElementById("hintAmt").textContent = data.expectedAmount;
         document.getElementById("upiHint").classList.remove("hidden");
+        document.getElementById("payWarn").classList.remove("hidden");
+        const mp = document.getElementById("manualPay");
+        if (mp) {
+          mp.classList.remove("hidden");
+          try {
+            const pa = new URLSearchParams(data.upiUri.split("?")[1]).get("pa") || "";
+            if (pa) document.getElementById("manVpa").textContent = pa;
+          } catch (_) {}
+          document.getElementById("manAmt").textContent = "₹" + data.expectedAmount;
+          document.getElementById("manNote").textContent = "Ticket " + data.id + " " + data.name;
+          document.querySelectorAll(".manAmt2").forEach((el) => (el.textContent = "₹" + data.expectedAmount));
+        }
         const battery = document.getElementById("batteryNote");
         if (battery) battery.classList.remove("hidden");
       } else if (data.paymentMode === "stripe" && data.checkoutUrl) {
-        payBtn.href = data.checkoutUrl;
-        payBtn.classList.remove("hidden");
-        payBtn.textContent = "Pay " + rs(data.expectedAmount) + " securely →";
+        grid.style.display = "none";
+        soloBtn.href = data.checkoutUrl;
+        soloBtn.style.display = "block";
+        soloBtn.textContent = "Pay " + rs(data.expectedAmount) + " securely →";
       } else {
-        payBtn.classList.add("hidden");
+        grid.style.display = "none";
+        soloBtn.style.display = "none";
       }
       if (data.demoMode) document.getElementById("demoBox").classList.remove("hidden");
       if (data.existing) {
@@ -407,6 +453,45 @@
       if (data.expiresIn) startCountdown(data.expiresIn);
       startPolling();
     }
+
+    // Copy-to-clipboard for the manual-pay helper
+    document.querySelectorAll(".copyBtn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const t = btn.dataset.copy;
+        const getText = () =>
+          t === "vpa" ? document.getElementById("manVpa").textContent.trim()
+          : t === "amt" ? document.getElementById("manAmt").textContent.replace(/[₹,]/g, "").trim()
+          : document.getElementById("manNote").textContent.trim();
+        try {
+          await navigator.clipboard.writeText(getText());
+        } catch (_) {
+          const ta = document.createElement("textarea");
+          ta.value = getText();
+          document.body.appendChild(ta);
+          ta.select();
+          try { document.execCommand("copy"); } catch (_) {}
+          ta.remove();
+        }
+        const old = btn.textContent;
+        btn.textContent = "✓ Copied";
+        setTimeout(() => (btn.textContent = old), 1400);
+      });
+    });
+
+    // Deep-link fallback: if an app button doesn't open anything (page still
+    // visible ~1.4s later), steer the guest to the manual-pay escape hatch.
+    ["payPhonePe", "payGPay", "payPaytm", "payOnPhone"].forEach((id) => {
+      const a = document.getElementById(id);
+      if (!a) return;
+      a.addEventListener("click", () => {
+        setTimeout(() => {
+          if (!document.hidden) {
+            const mp = document.getElementById("manualPay");
+            if (mp) mp.scrollIntoView({ behavior: "smooth", block: "center" });
+          }
+        }, 1400);
+      });
+    });
 
     function startCountdown(secondsLeft) {
       const el = document.getElementById("expiryCountdown");
