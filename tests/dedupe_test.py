@@ -185,6 +185,29 @@ class ExpiryTests(unittest.TestCase):
         self.assertFalse(d.get("accepted"))
         self.assertEqual(d.get("reason"), "txn-before-booking")  # code matched, but txn predates booking
 
+    def test_webhook_second_notification_for_paid_ticket_never_hijacks(self):
+        """Busy-day guard: MacroDroid double-fire (or a guest paying twice) on a
+        settled ticket must not confirm a DIFFERENT pending booking."""
+        a = register("paid-again@example.com", persons=1).get_json()
+        d1 = webhook(f"Received Rs 69 from Test User Ticket {a['id']}").get_json()
+        self.assertTrue(d1.get("accepted"), d1)
+        b = register("innocent@example.com", persons=1).get_json()
+        self.assertEqual(client.get(f"/api/status/{b['id']}").get_json()["status"], "pending")
+        # Same notification arrives a second time (MacroDroid has no UTR to dedupe on)
+        d2 = webhook(f"Received Rs 69 from Test User Ticket {a['id']}").get_json()
+        self.assertFalse(d2.get("accepted"), d2)
+        self.assertEqual(d2.get("reason"), "already-paid")
+        self.assertEqual(client.get(f"/api/status/{b['id']}").get_json()["status"], "pending")
+
+    def test_webhook_unknown_ticket_code_fails_safe(self):
+        """A note naming a nonexistent ticket (typo / cleaned-up row) must never
+        silently confirm a different pending booking — manual review instead."""
+        b = register("hijack@example.com", persons=1).get_json()
+        d = webhook("Received Rs 69 from Test User Ticket ME-ZZZZZZ").get_json()
+        self.assertFalse(d.get("accepted"), d)
+        self.assertEqual(d.get("reason"), "unknown-ticket-code")
+        self.assertEqual(client.get(f"/api/status/{b['id']}").get_json()["status"], "pending")
+
     def test_webhook_accepts_key_in_url(self):
         """The MacroDroid URL style: ?key= in the URL, body has just the text."""
         reg = register("urlkey@example.com", persons=1).get_json()

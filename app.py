@@ -894,6 +894,18 @@ def api_upi_webhook():
     if m:
         code = m.group(0).upper()
         by_code = next((r for r in DB["registrations"] if r["id"] == code), None)
+        # Settled tickets never re-match: a double-fired notification or a
+        # second payment on an already-paid ticket must NOT bleed into a
+        # different pending booking (busy-day mis-assignment guard).
+        if by_code and by_code["status"] in ("paid", "refunded"):
+            return jsonify({"ok": True, "accepted": False, "reason": "already-paid",
+                            "ticket": code})
+        # The note carries exactly one ticket code. If it names no live booking
+        # (typo, or ticket was cleaned up), fail safe for manual review instead
+        # of silently assigning the money to another guest.
+        if by_code is None:
+            return jsonify({"ok": True, "accepted": False, "reason": "unknown-ticket-code",
+                            "ticket": code})
         if by_code and by_code["status"] in ("pending", "expired"):
             if by_code.get("expectedAmount") == amount:
                 # Time sanity: the transaction must not predate the booking
