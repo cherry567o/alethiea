@@ -141,9 +141,10 @@
       <button class="ftab" data-f="checked">Checked-in</button>
       <button class="ftab" data-f="refunded">Refunded</button>
       <button class="ftab" data-f="expired">Expired</button>
+      <button class="ftab" data-f="webhook">🧾 Payments log</button>
     </div>
 
-    <table>
+    <table id="regsTable">
       <thead>
         <tr>
           <th>Ticket ID</th><th>Name</th><th>Email</th><th>Persons</th>
@@ -152,10 +153,24 @@
       </thead>
       <tbody id="rows"></tbody>
     </table>
+
+    <div id="logView" style="display:none;">
+      <h2 style="font-size:15px; color:#fff; margin:26px 0 6px;">🧾 Payments log — every UPI notification your phone forwarded <span class="count" id="logCount" style="color:#f5c542;"></span></h2>
+      <p class="sub" style="margin-bottom:14px;">Accepted <b>and</b> rejected, newest first (last 200 kept). If a guest says “I paid” but their ticket isn't green, find their notification here with the exact reason it was held back.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th><th>Result</th><th>Amount</th><th>Ticket</th><th>Sender</th><th>Message (first 160 chars)</th>
+          </tr>
+        </thead>
+        <tbody id="logRows"></tbody>
+      </table>
+    </div>
   </div>
 
   <script>
     let all = [];
+    let webhookLog = [];
     let query = "";
     let filter = "all";
     const KEY = new URLSearchParams(location.search).get("key") || "";
@@ -170,9 +185,11 @@
         }
         const data = await res.json();
         all = data.registrations;
+        webhookLog = data.webhookLog || [];
         renderStats(data.stats);
         renderRealPanel();
         renderRows();
+        if (filter === "webhook") renderLog();
         document.getElementById("lastUpdate").textContent = "updated " + new Date().toLocaleTimeString();
       } catch (_) {}
     }
@@ -261,11 +278,54 @@
         .join("");
     }
 
+    const LOG_REASONS = {
+      "accepted": "auto-accepted",
+      "already-paid": "ticket already paid",
+      "unknown-ticket-code": "unknown ticket code in note",
+      "txn-before-booking": "paid before booking existed",
+      "name-mismatch": "sender name mismatch — manual check",
+      "amount-mismatch": "wrong amount",
+      "ambiguous": "several tickets at this amount",
+      "no-matching-pending-booking": "no pending ticket for this amount",
+      "duplicate": "same notification twice",
+      "unparseable-amount": "amount not readable",
+      "bad-amount": "bad amount",
+      "unauthorized": "wrong key — sender not trusted",
+    };
+
+    function renderLog() {
+      const tbody = document.getElementById("logRows");
+      document.getElementById("logCount").textContent = webhookLog.length ? "(" + webhookLog.length + ")" : "";
+      if (!webhookLog.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="empty">No payment notifications yet. Every UPI SMS your phone forwards will appear here — accepted or rejected, with the reason.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = webhookLog.map((e) => {
+        const t = e.ts ? new Date(e.ts).toLocaleString() : "—";
+        const label = LOG_REASONS[e.reason] || e.reason || "rejected";
+        const badge = e.accepted
+          ? '<span class="badge paid">✓ ' + esc(label) + '</span>'
+          : '<span class="badge expired">✗ ' + esc(label) + '</span>';
+        const ref = e.upiRef ? '<div class="id-cell">ref: ' + esc(e.upiRef) + '</div>' : "";
+        return '<tr>' +
+          '<td class="id-cell">' + t + '</td>' +
+          '<td>' + badge + '</td>' +
+          '<td>' + (e.amount != null ? "₹" + esc(e.amount) : "—") + '</td>' +
+          '<td class="id-cell">' + esc(e.ticket || "—") + '</td>' +
+          '<td>' + esc(e.sender || "—") + ref + '</td>' +
+          '<td class="id-cell" style="white-space:normal; max-width:360px;">' + esc(e.snippet || "") + '</td>' +
+        '</tr>';
+      }).join("");
+    }
+
     document.querySelectorAll(".ftab").forEach((b) => b.addEventListener("click", () => {
       document.querySelectorAll(".ftab").forEach((x) => x.classList.remove("active"));
       b.classList.add("active");
       filter = b.dataset.f;
-      renderRows();
+      const logMode = filter === "webhook";
+      document.getElementById("regsTable").style.display = logMode ? "none" : "";
+      document.getElementById("logView").style.display = logMode ? "" : "none";
+      if (logMode) renderLog(); else renderRows();
     }));
 
     function esc(s) {

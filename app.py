@@ -839,18 +839,43 @@ def _parse_txn_time(text):
         return None
 
 
+def _log_webhook(accepted, reason, *, amount=None, ticket=None, sender="",
+                 upi_ref=None, text="", extra=None):
+    """Audit trail for /api/upi-webhook: EVERY payment notification MacroDroid
+    forwards — accepted or rejected, matched or not — lands in DB['webhookLog']
+    (newest first, newest 200 kept) so the admin panel can show a receipt for
+    each decision, even the ones that changed nothing."""
+    entry = {
+        "ts": int(time.time() * 1000),
+        "accepted": bool(accepted),
+        "reason": reason,
+        "amount": amount,
+        "ticket": ticket,
+        "sender": sender or None,
+        "upiRef": upi_ref or None,
+        "snippet": (text or "")[:160],
+    }
+    if extra:
+        entry.update(extra)
+    log = DB.setdefault("webhookLog", [])
+    log.insert(0, entry)
+    del log[200:]
+    _save(DB)
+
+
 @app.post("/api/upi-webhook")
 def api_upi_webhook():
     body = request.get_json(silent=True) or {}
     # Key can come in the JSON body OR in the URL (?key=...) — MacroDroid's URL
     # field is easier to paste into than a JSON body, so accept both.
     supplied = body.get("key") or request.args.get("key", "")
-    if supplied != ADMIN_KEY:
-        return jsonify({"error": "unauthorized"}), 401
     text = (body.get("text") or "").strip()
     amount = body.get("amount")
     name_hint = (body.get("name") or "").strip()
     upi_ref = (body.get("ref") or "").strip()
+    if supplied != ADMIN_KEY:
+        _log_webhook(False, "unauthorized", text=text, sender=name_hint)
+        return jsonify({"error": "unauthorized"}), 401
 
     # Parse amount out of the message: "Rs 69", "Rs.69.00", "INR 138", "₹69"
     if not amount and text:
@@ -860,8 +885,10 @@ def api_upi_webhook():
     try:
         amount = int(float(amount))  # whole rupees — advertised price, no paise games
     except (TypeError, ValueError):
+        _log_webhook(False, "unparseable-amount", amount=amount, text=text, sender=name_hint)
         return jsonify({"ok": False, "error": "could not parse amount from message"}), 400
     if amount <= 0:
+        _log_webhook(False, "bad-amount", amount=amount, text=text, sender=name_hint)
         return jsonify({"ok": False, "error": "bad amount"}), 400
 
     # Name is display-only (names collide across UPI users).
@@ -870,6 +897,8 @@ def api_upi_webhook():
     if upi_ref:
         dup = next((r for r in DB["registrations"] if r.get("autoRef") == upi_ref), None)
         if dup:
+            _log_webhook(False, "duplicate", amount=amount, ticket=dup["id"],
+                         sender=name_hint, upi_ref=upi_ref, text=text)
             return jsonify({"ok": True, "accepted": False, "duplicate": True, "ticket": dup["id"]})
 
     # PRIMARY match: the payer's own payment NOTE — each guest is told to attach
@@ -898,12 +927,16 @@ def api_upi_webhook():
         # second payment on an already-paid ticket must NOT bleed into a
         # different pending booking (busy-day mis-assignment guard).
         if by_code and by_code["status"] in ("paid", "refunded"):
+            _log_webhook(False, "already-paid", amount=amount, ticket=code,
+                         sender=name_hint, upi_ref=upi_ref, text=text)
             return jsonify({"ok": True, "accepted": False, "reason": "already-paid",
                             "ticket": code})
         # The note carries exactly one ticket code. If it names no live booking
         # (typo, or ticket was cleaned up), fail safe for manual review instead
         # of silently assigning the money to another guest.
         if by_code is None:
+            _log_webhook(False, "unknown-ticket-code", amount=amount, ticket=code,
+                         sender=name_hint, upi_ref=upi_ref, text=text)
             return jsonify({"ok": True, "accepted": False, "reason": "unknown-ticket-code",
                             "ticket": code})
         if by_code and by_code["status"] in ("pending", "expired"):
@@ -911,6 +944,9 @@ def api_upi_webhook():
                 # Time sanity: the transaction must not predate the booking
                 # (payments can't belong to tickets created later).
                 if txn_ms and by_code.get("createdAt") and txn_ms < by_code["createdAt"] - 120000:
+                    _log_webhook(False, "txn-before-booking", amount=amount, ticket=code,
+                                 sender=name_hint, upi_ref=upi_ref, text=text,
+                                 extra={"txnTime": txn_ms, "bookedAt": by_code["createdAt"]})
                     return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
                                     "ticket": code, "txnTime": txn_ms,
                                     "bookedAt": by_code["createdAt"]})
@@ -918,6 +954,9 @@ def api_upi_webhook():
                 # UPI name shares NO word with the registered/UPI name, don't blind-
                 # accept — a copied note+amount would otherwise pass. Manual review.
                 if not _name_consistent(name_hint, by_code):
+                    _log_webhook(False, "name-mismatch", amount=amount, ticket=code,
+                                 sender=name_hint, upi_ref=upi_ref, text=text,
+                                 extra={"registered": by_code["name"]})
                     return jsonify({"ok": True, "accepted": False, "reason": "name-mismatch",
                                     "ticket": code, "sender": name_hint,
                                     "registered": by_code["name"]})
@@ -926,8 +965,13 @@ def api_upi_webhook():
                 if live:
                     live["autoRef"] = upi_ref or None
                     _save(DB)
+                _log_webhook(True, "accepted", amount=amount, ticket=code,
+                             sender=name_hint, upi_ref=upi_ref, text=text)
                 return jsonify({"ok": True, "accepted": True, "ticket": code,
                                 "name": by_code["name"], "amount": amount, "emailTo": by_code["email"]})
+            _log_webhook(False, "amount-mismatch", amount=amount, ticket=code,
+                         sender=name_hint, upi_ref=upi_ref, text=text,
+                         extra={"expected": by_code.get("expectedAmount")})
             return jsonify({"ok": True, "accepted": False,
                             "reason": "amount-mismatch", "ticket": code,
                             "expected": by_code.get("expectedAmount"), "amount": amount})
@@ -937,15 +981,24 @@ def api_upi_webhook():
     cands = [r for r in DB["registrations"] if r["status"] in ("pending", "expired") and
              r.get("expectedAmount", 0) == amount]
     if len(cands) == 1 and txn_ms and cands[0].get("createdAt") and txn_ms < cands[0]["createdAt"] - 120000:
+        _log_webhook(False, "txn-before-booking", amount=amount, ticket=cands[0]["id"],
+                     sender=name_hint, upi_ref=upi_ref, text=text,
+                     extra={"txnTime": txn_ms, "bookedAt": cands[0]["createdAt"]})
         return jsonify({"ok": True, "accepted": False, "reason": "txn-before-booking",
                         "ticket": cands[0]["id"], "txnTime": txn_ms,
                         "bookedAt": cands[0]["createdAt"]})
     if len(cands) == 1 and not _name_consistent(name_hint, cands[0]):
+        _log_webhook(False, "name-mismatch", amount=amount, ticket=cands[0]["id"],
+                     sender=name_hint, upi_ref=upi_ref, text=text,
+                     extra={"registered": cands[0]["name"]})
         return jsonify({"ok": True, "accepted": False, "reason": "name-mismatch",
                         "ticket": cands[0]["id"], "sender": name_hint,
                         "registered": cands[0]["name"]})
 
     if len(cands) != 1:
+        _log_webhook(False, "ambiguous" if len(cands) > 1 else "no-matching-pending-booking",
+                     amount=amount, sender=name_hint, upi_ref=upi_ref, text=text,
+                     extra={"candidates": [r["id"] for r in cands]})
         return jsonify({"ok": True, "accepted": False,
                         "reason": "ambiguous" if len(cands) > 1 else "no-matching-pending-booking",
                         "amount": amount, "candidates": [r["id"] for r in cands]})
@@ -956,6 +1009,8 @@ def api_upi_webhook():
     if live:
         live["autoRef"] = upi_ref or None
         _save(DB)
+    _log_webhook(True, "accepted", amount=amount, ticket=reg["id"],
+                 sender=name_hint, upi_ref=upi_ref, text=text)
     return jsonify({"ok": True, "accepted": True, "ticket": reg["id"],
                     "name": reg["name"], "amount": amount, "emailTo": reg["email"]})
 
@@ -1024,7 +1079,8 @@ def api_admin_data():
         "verifyingAmount": sum(r["expectedAmount"] for r in verifying),
         "expected": sum(r["expectedAmount"] for r in DB["registrations"]),
     }
-    return jsonify({"registrations": DB["registrations"], "stats": stats})
+    return jsonify({"registrations": DB["registrations"], "stats": stats,
+                    "webhookLog": DB.get("webhookLog", [])})
 
 
 @app.post("/api/admin/checkin")
