@@ -236,6 +236,7 @@
           <a id="payOnPhone" href="#" style="display:block; padding:13px 8px; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:14px; font-weight:bold; text-align:center; text-decoration:none;">⚙️ Other UPI app</a>
         </div>
         <a id="payOnPhoneSolo" href="#" style="display:none; width:100%; margin-top:12px; padding:13px; border:none; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:15px; font-weight:bold; text-align:center; text-decoration:none;">Pay ₹69 × persons on this phone →</a>
+        <button id="payRzp" type="button" style="display:none; width:100%; margin-top:12px; padding:14px; border-radius:10px; background:#0d2b3e; border:1px solid #1e6b8a; color:#bfe6ff; font-size:15px; font-weight:bold; text-align:center; cursor:pointer; font-family:inherit;">Pay securely — card / UPI / netbanking →</button>
         <div id="upiHint" class="hidden" style="margin-top:10px; font-size:12px; color:#8f8dab; text-align:center; line-height:1.6;">Tap an app — it opens with ₹<span id="hintAmt">69</span> and your ticket note pre-filled. Didn't open, or opened without the amount? Tap the button again, or use <b style="color:#cfcde4">Pay manually</b> below. On a laptop? Open this page in <b style="color:#cfcde4">Chrome on your phone</b>.</div>
         <div id="manualPay" class="hidden" style="margin-top:12px; border:1px dashed rgba(143,141,171,0.4); border-radius:10px; padding:12px 14px; background:rgba(143,141,171,0.05);">
           <div style="font-size:13px; font-weight:bold; color:#cfcde4; text-align:center;">Pay manually — works every time</div>
@@ -440,6 +441,19 @@
         soloBtn.href = data.checkoutUrl;
         soloBtn.style.display = "block";
         soloBtn.textContent = "Pay " + rs(data.expectedAmount) + " securely →";
+      } else if (data.paymentMode === "razorpay") {
+        // Razorpay Standard Checkout: modal opens right here (cards/UPI/netbanking)
+        grid.style.display = "none";
+        soloBtn.style.display = "none";
+        const rzpBtn = document.getElementById("payRzp");
+        if (rzpBtn) {
+          rzpBtn.style.display = "block";
+          rzpBtn.textContent = "Pay " + rs(data.expectedAmount || data.amount) + " securely — card / UPI / netbanking →";
+        }
+        ["upiHint", "manualPay", "noteBox", "payWarn"].forEach((id) => {
+          const el = document.getElementById(id);
+          if (el) el.classList.add("hidden");
+        });
       } else {
         grid.style.display = "none";
         soloBtn.style.display = "none";
@@ -570,6 +584,66 @@
       document.getElementById("ticketPin").textContent = r.pin || "----";
       document.getElementById("paidAmount").textContent = rs(r.amountPaid);
     }
+
+    // ---- Razorpay Standard Checkout ----
+    function loadRzpScript(cb) {
+      if (window.Razorpay) return cb();
+      const s = document.createElement("script");
+      s.src = "https://checkout.razorpay.com/v1/checkout.js";
+      s.onload = () => cb();
+      s.onerror = () => alert("Could not load the payment window — check your internet and try again.");
+      document.head.appendChild(s);
+    }
+
+    document.getElementById("payRzp").addEventListener("click", async () => {
+      if (!current) return;
+      const btn = document.getElementById("payRzp");
+      if (btn.disabled) return;
+      btn.disabled = true;
+      const old = btn.textContent;
+      btn.textContent = "Opening payment window…";
+      try {
+        const res = await fetch("/api/create-order", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reg_id: current.id }),
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || "Could not start the payment");
+        loadRzpScript(() => {
+          const rzp = new Razorpay({
+            key: d.key_id,
+            order_id: d.order_id,
+            name: "Aletheia — To Uncover",
+            description: d.description,
+            prefill: { name: d.name, email: d.email },
+            theme: { color: "#f5c542" },
+            handler: async (resp) => {
+              try {
+                const v = await fetch("/api/verify-payment", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ reg_id: current.id, ...resp }),
+                });
+                const vd = await v.json();
+                if (!v.ok) throw new Error(vd.error || "Verification failed");
+                checkStatus();
+              } catch (err) {
+                alert("Payment succeeded but confirmation hiccuped: " + err.message + " — stay on this page, it confirms automatically.");
+              }
+            },
+            modal: { ondismiss: () => {} },
+          });
+          rzp.on("payment.failed", () => alert("Payment failed — no money was taken. Please try again."));
+          rzp.open();
+        });
+      } catch (err) {
+        alert(err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = old;
+      }
+    });
 
     document.getElementById("demoPayBtn").addEventListener("click", async () => {
       if (!current) return;

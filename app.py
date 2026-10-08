@@ -48,7 +48,16 @@ RZP_READY = bool(RZP_KEY_ID and RZP_KEY_SECRET and RZP_KEY_ID.startswith(("rzp_t
 # Note: Stripe is not currently accepting new Indian merchant accounts - activate only if
 # you already have keys. Without a key, UPI mode stays active.
 STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
-PAYMENT_MODE = "stripe" if STRIPE_SECRET_KEY.startswith("sk_") else ("upi" if UPI_ID else ("razorpay" if RZP_READY else "demo"))
+# Manual override: set PAYMENT_MODE=razorpay (or upi/stripe/demo) in .env to force a
+# mode — e.g. testing Standard Checkout with test keys. Without an override:
+#   stripe(sk_) > razorpay(live keys) > UPI > razorpay(test keys) > demo
+# so TEST keys can never hijack real-guest payments away from the 0%-fee UPI flow.
+FORCED_MODE = os.environ.get("PAYMENT_MODE", "").strip().lower()
+RZP_LIVE = RZP_KEY_ID.startswith("rzp_live_")
+_auto_mode = ("stripe" if STRIPE_SECRET_KEY.startswith("sk_")
+              else ("razorpay" if RZP_READY and RZP_LIVE else
+                    ("upi" if UPI_ID else ("razorpay" if RZP_READY else "demo"))))
+PAYMENT_MODE = FORCED_MODE if FORCED_MODE in ("stripe", "razorpay", "upi", "demo") else _auto_mode
 
 ADMIN_KEY = os.environ.get("ADMIN_KEY", "changeme123")
 PORT = int(os.environ.get("PORT", "3000") or 3000)
@@ -611,29 +620,15 @@ def api_register():
         return jsonify({**reg, "qrDataUrl": make_qr(upi_payment_uri(reg)),
                         "upiUri": upi_payment_uri(reg), "upiId": UPI_ID, "demoMode": False})
 
-    if RZP_READY:
-        try:
-            link = rzp_create_payment_link(reg)
-        except urllib.error.HTTPError as e:
-            detail = ""
-            try:
-                detail = e.read().decode()[:300]
-            except Exception:
-                pass
-            app.logger.error("Razorpay error %s: %s", e.code, detail)
-            msg = "Could not start payment. Please try again."
-            if e.code == 401:
-                msg = "Razorpay rejected the API keys — check RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in .env."
-            return jsonify({"error": msg}), 502
-        except Exception as e:
-            app.logger.error("Razorpay error: %s", e)
-            return jsonify({"error": "Could not reach Razorpay. Check your internet connection and try again."}), 502
-
+    if PAYMENT_MODE == "razorpay" and RZP_READY:
+        # Razorpay STANDARD CHECKOUT: the pay page opens the Razorpay modal
+        # (cards / UPI / netbanking). The order itself is created on demand by
+        # /api/create-order so the amount is always computed server-side. The QR
+        # encodes this pay page — guests on a laptop scan it to pay on their phone.
+        reg["paymentMode"] = "razorpay"
         DB["registrations"].append(reg)
         DB["payments"].append({
             "ref": reg["id"],
-            "paymentLinkId": link["id"],
-            "shortUrl": link.get("short_url", ""),
             "amount": amount,
             "currency": CURRENCY,
             "provider": "razorpay",
@@ -641,10 +636,8 @@ def api_register():
             "createdAt": int(time.time() * 1000),
         })
         _save(DB)
-
-        payment_qr = make_qr(link["short_url"])  # scanning opens the Razorpay payment page
-        return jsonify({**reg, "qrDataUrl": payment_qr,
-                        "checkoutUrl": link.get("short_url", ""), "demoMode": False})
+        pay_url = public_base(request) + f"/pay/{reg['id']}"
+        return jsonify({**reg, "qrDataUrl": make_qr(pay_url), "demoMode": False})
 
     # DEMO MODE — QR opens the local pay page; a button simulates payment success.
     reg["demoMode"] = True
@@ -696,6 +689,21 @@ def api_status(reg_id):
                 pass
         reg = find_reg(reg_id)
 
+    # Live Razorpay STANDARD Checkout: poll the order's payments if the browser's
+    # verify call never made it back (guest closed the tab before the handler ran).
+    if RZP_READY and reg["status"] == "pending":
+        payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
+        if payment and payment.get("rzpOrderId"):
+            try:
+                pays = _rzp_request("GET", f"/orders/{payment['rzpOrderId']}/payments")
+                for p in pays.get("items", []):
+                    if p.get("status") == "captured":
+                        mark_paid(reg_id, p.get("amount", 0) / 100, "razorpay-poll")
+                        break
+            except Exception:
+                pass
+        reg = find_reg(reg_id)
+
     # The entry-ticket QR exists ONLY after the admin verifies payment (anti-scam).
     # The PIN is included so the ticket screen can display it next to the QR.
     resp = {**reg, **extra, "qrDataUrl": make_qr(public_base(request) + f"/pay/{reg_id}")}
@@ -711,6 +719,95 @@ def api_demo_pay(reg_id):
     if not mark_paid(reg_id, source="demo"):
         return jsonify({"error": "Registration not found"}), 404
     return jsonify({"ok": True})
+
+
+# ---------------- Razorpay Standard Checkout (orders + signature verify) ----------------
+
+@app.post("/api/create-order")
+def api_create_order():
+    """Razorpay Standard Checkout step 1: create an order for a booking.
+    The amount is ALWAYS computed server-side from the booking — the client
+    never sends an amount."""
+    if not RZP_READY:
+        return jsonify({"error": "Razorpay is not configured"}), 503
+    body = request.get_json(silent=True) or {}
+    reg = find_reg((body.get("reg_id") or "").strip())
+    if not reg:
+        return jsonify({"error": "Registration not found"}), 404
+    if reg["status"] in ("paid", "refunded", "cancelled"):
+        return jsonify({"error": "Ticket is already " + reg["status"]}), 400
+    amount_paise = int(round((reg.get("expectedAmount") or 0) * 100))
+    if amount_paise < 100:
+        return jsonify({"error": "Amount below Razorpay minimum (₹1)"}), 400
+    try:
+        order = _rzp_request("POST", "/orders", {
+            "amount": amount_paise,
+            "currency": CURRENCY,
+            "receipt": reg["id"],
+            "notes": {"registrationId": reg["id"]},
+        })
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode()[:300]
+        except Exception:
+            pass
+        app.logger.error("Razorpay order failed for %s: %s %s", reg["id"], e.code, detail)
+        if e.code in (401, 403):
+            return jsonify({"error": "Razorpay rejected the API keys — check RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET."}), 401
+        return jsonify({"error": "Could not start the payment. Please try again."}), 502
+    except Exception as e:
+        app.logger.error("Razorpay order failed for %s: %s", reg["id"], e)
+        return jsonify({"error": "Could not reach Razorpay. Check your internet and try again."}), 502
+
+    reg["rzpOrderId"] = order.get("id")
+    payment = next((p for p in DB["payments"] if p["ref"] == reg["id"]), None)
+    if payment:
+        payment["rzpOrderId"] = order.get("id")
+        payment["provider"] = "razorpay"
+    _save(DB)
+    return jsonify({
+        "order_id": order.get("id"),
+        "amount": order.get("amount", amount_paise),
+        "currency": order.get("currency", CURRENCY),
+        "key_id": RZP_KEY_ID,  # public id only — the secret never leaves the server
+        "name": reg["name"],
+        "email": reg["email"],
+        "description": f"Aletheia ticket {reg['id']} · {reg['persons']} person(s)",
+    })
+
+
+@app.post("/api/verify-payment")
+def api_verify_payment():
+    """Razorpay Standard Checkout step 2: HMAC-SHA256(order_id|payment_id, secret)
+    must equal razorpay_signature. Only a verified payment marks the ticket paid."""
+    if not RZP_READY:
+        return jsonify({"error": "Razorpay is not configured"}), 503
+    body = request.get_json(silent=True) or {}
+    order_id = (body.get("razorpay_order_id") or "").strip()
+    payment_id = (body.get("razorpay_payment_id") or "").strip()
+    signature = (body.get("razorpay_signature") or "").strip()
+    if not (order_id and payment_id and signature):
+        return jsonify({"error": "missing payment fields"}), 400
+    expected = hmac.new(RZP_KEY_SECRET.encode(),
+                        f"{order_id}|{payment_id}".encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, signature):
+        return jsonify({"error": "payment signature verification failed"}), 400
+    # Bind the verified order to the booking it was created for — an order that
+    # matches no booking never marks anything paid.
+    reg = None
+    candidate = find_reg((body.get("reg_id") or "").strip())
+    if candidate and candidate.get("rzpOrderId") == order_id:
+        reg = candidate
+    if reg is None:
+        reg = next((r for r in DB["registrations"] if r.get("rzpOrderId") == order_id), None)
+    if reg is None:
+        return jsonify({"error": "order does not match any booking"}), 400
+    if reg["status"] == "paid":
+        return jsonify({"ok": True, "ticket": reg["id"], "already": True})
+    mark_paid(reg["id"], reg.get("expectedAmount"), "razorpay")
+    app.logger.info("Razorpay payment verified for %s (%s)", reg["id"], payment_id)
+    return jsonify({"ok": True, "ticket": reg["id"], "name": reg["name"]})
 
 
 @app.post("/api/admin/verify")
