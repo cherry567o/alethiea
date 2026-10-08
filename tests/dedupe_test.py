@@ -122,15 +122,6 @@ def rewind_first_booking(ms=601_000):
     return row
 
 
-def webhook(text):
-    return client.post("/api/upi-webhook", json={"key": appmod.ADMIN_KEY, "text": text})
-
-
-def webhook_url_key(text):
-    """MacroDroid-style: the key rides in the URL, body only carries the text."""
-    return client.post(f"/api/upi-webhook?key={appmod.ADMIN_KEY}", json={"text": text})
-
-
 class ExpiryTests(unittest.TestCase):
     def setUp(self):
         appmod.DB = {"registrations": [], "payments": []}
@@ -159,65 +150,6 @@ class ExpiryTests(unittest.TestCase):
         self.assertNotEqual(second["id"], first["id"])
         self.assertNotIn("existing", second)
 
-    def test_webhook_revives_expired_booking_via_code(self):
-        """Money-safe core: late UPI payment still issues the ticket."""
-        reg = register("exp-late@example.com", persons=1).get_json()
-        rewind_first_booking()
-        txn = (datetime.now() - timedelta(seconds=30)).strftime("on %d-%m-%y at %I:%M%p")
-        resp = webhook(f"Received Rs 69 from Test User {txn} Ticket {reg['id']}")
-        d = resp.get_json()
-        self.assertTrue(d.get("accepted"), d)
-        self.assertEqual(d["ticket"], reg["id"])
-        self.assertEqual(client.get(f"/api/status/{reg['id']}").get_json()["status"], "paid")
-
-    def test_webhook_fallback_finds_expired_booking(self):
-        register("exp-fb@example.com", persons=1)
-        rewind_first_booking()
-        txn = (datetime.now() - timedelta(seconds=30)).strftime("on %d-%m-%y at %I:%M%p")
-        d = webhook(f"Rs 69 received from Test User {txn}").get_json()
-        self.assertTrue(d.get("accepted"), d)
-
-    def test_webhook_still_rejects_txn_before_expired_booking(self):
-        register("exp-early@example.com", persons=1)
-        rewind_first_booking()
-        old = (datetime.now() - timedelta(hours=1)).strftime("on %d-%m-%y at %I:%M%p")
-        d = webhook(f"Received Rs 69 from Test User {old}").get_json()
-        self.assertFalse(d.get("accepted"))
-        self.assertEqual(d.get("reason"), "txn-before-booking")  # code matched, but txn predates booking
-
-    def test_webhook_second_notification_for_paid_ticket_never_hijacks(self):
-        """Busy-day guard: MacroDroid double-fire (or a guest paying twice) on a
-        settled ticket must not confirm a DIFFERENT pending booking."""
-        a = register("paid-again@example.com", persons=1).get_json()
-        d1 = webhook(f"Received Rs 69 from Test User Ticket {a['id']}").get_json()
-        self.assertTrue(d1.get("accepted"), d1)
-        b = register("innocent@example.com", persons=1).get_json()
-        self.assertEqual(client.get(f"/api/status/{b['id']}").get_json()["status"], "pending")
-        # Same notification arrives a second time (MacroDroid has no UTR to dedupe on)
-        d2 = webhook(f"Received Rs 69 from Test User Ticket {a['id']}").get_json()
-        self.assertFalse(d2.get("accepted"), d2)
-        self.assertEqual(d2.get("reason"), "already-paid")
-        self.assertEqual(client.get(f"/api/status/{b['id']}").get_json()["status"], "pending")
-
-    def test_webhook_unknown_ticket_code_fails_safe(self):
-        """A note naming a nonexistent ticket (typo / cleaned-up row) must never
-        silently confirm a different pending booking — manual review instead."""
-        b = register("hijack@example.com", persons=1).get_json()
-        d = webhook("Received Rs 69 from Test User Ticket ME-ZZZZZZ").get_json()
-        self.assertFalse(d.get("accepted"), d)
-        self.assertEqual(d.get("reason"), "unknown-ticket-code")
-        self.assertEqual(client.get(f"/api/status/{b['id']}").get_json()["status"], "pending")
-
-    def test_webhook_accepts_key_in_url(self):
-        """The MacroDroid URL style: ?key= in the URL, body has just the text."""
-        reg = register("urlkey@example.com", persons=1).get_json()
-        d = webhook_url_key(f"Received Rs 69 from Test User Ticket {reg['id']}").get_json()
-        self.assertTrue(d.get("accepted"), d)
-
-    def test_webhook_rejects_wrong_key_in_url(self):
-        r = client.post("/api/upi-webhook?key=WRONGKEY", json={"text": "Received Rs 69"})
-        self.assertEqual(r.status_code, 401)
-
     def test_admin_data_counts_expired(self):
         register("exp-count@example.com", persons=1)
         rewind_first_booking()
@@ -225,6 +157,84 @@ class ExpiryTests(unittest.TestCase):
         import base64
         req = client.get("/api/admin/data", headers={"x-admin-key": appmod.ADMIN_KEY})
         self.assertEqual(req.get_json()["stats"]["expired"], 1)
+
+
+class RazorpayCheckoutTests(unittest.TestCase):
+    """Standard Checkout verify endpoint: signature gate + order-to-booking binding."""
+
+    def setUp(self):
+        appmod.DB = {"registrations": [], "payments": []}
+        self._secret = appmod.RZP_KEY_SECRET
+        appmod.RZP_KEY_SECRET = "test_secret_key"
+
+    def tearDown(self):
+        appmod.RZP_KEY_SECRET = self._secret
+
+    def test_verify_payment_rejects_bad_and_missing_signatures(self):
+        reg = register("rzp@example.com", persons=1).get_json()
+        row = next(x for x in appmod.DB["registrations"] if x["id"] == reg["id"])
+        row["rzpOrderId"] = "order_TEST123"
+        appmod._save(appmod.DB)
+        base = {"razorpay_order_id": "order_TEST123", "razorpay_payment_id": "pay_TEST1",
+                "reg_id": reg["id"]}
+        # missing fields
+        self.assertEqual(client.post("/api/verify-payment", json={"razorpay_order_id": "order_TEST123"}).status_code, 400)
+        # wrong signature → 400 and booking stays pending (never marked paid)
+        r = client.post("/api/verify-payment", json={**base, "razorpay_signature": "deadbeef"})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(client.get(f"/api/status/{reg['id']}").get_json()["status"], "pending")
+        # correct HMAC-SHA256(order_id|payment_id, secret) → ticket issues
+        import hashlib
+        import hmac as hmac_mod
+        sig = hmac_mod.new(b"test_secret_key", b"order_TEST123|pay_TEST1", hashlib.sha256).hexdigest()
+        r = client.post("/api/verify-payment", json={**base, "razorpay_signature": sig})
+        self.assertEqual(r.status_code, 200)
+        self.assertTrue(r.get_json().get("ok"))
+        self.assertEqual(client.get(f"/api/status/{reg['id']}").get_json()["status"], "paid")
+        # repeat verify is idempotent
+        r2 = client.post("/api/verify-payment", json={**base, "razorpay_signature": sig})
+        self.assertEqual(r2.status_code, 200)
+        self.assertTrue(r2.get_json().get("already"))
+
+    def test_verify_rejects_order_bound_to_no_booking(self):
+        register("rzp-orphan@example.com", persons=1)
+        import hashlib
+        import hmac as hmac_mod
+        sig = hmac_mod.new(b"test_secret_key", b"order_ORPHAN|pay_X", hashlib.sha256).hexdigest()
+        r = client.post("/api/verify-payment", json={
+            "razorpay_order_id": "order_ORPHAN", "razorpay_payment_id": "pay_X",
+            "razorpay_signature": sig})
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(len(appmod.DB["registrations"]), 1)
+        self.assertEqual(appmod.DB["registrations"][0]["status"], "pending")
+
+
+    def test_razorpay_webhook_requires_valid_signature(self):
+        """Security: forged webhook calls must NEVER hand out tickets — unsigned
+        or wrongly-signed payloads are rejected outright."""
+        original = appmod.RZP_WEBHOOK_SECRET
+        try:
+            forged = {"event": "payment.captured",
+                      "payload": {"payment": {"entity": {"notes": {"registrationId": "ME-FAKE01"}}}}}
+            # no secret configured → reject everything
+            appmod.RZP_WEBHOOK_SECRET = ""
+            self.assertEqual(client.post("/webhook", json=forged).status_code, 503)
+            # wrong signature → 400
+            appmod.RZP_WEBHOOK_SECRET = "whsec_test"
+            self.assertEqual(client.post("/webhook", json=forged,
+                                         headers={"X-Razorpay-Signature": "bad"}).status_code, 400)
+            # valid signature → accepted (unknown reg id is safely ignored)
+            import hashlib
+            import hmac as hmac_mod
+            import json
+            raw = json.dumps(forged).encode()
+            good = hmac_mod.new(b"whsec_test", raw, hashlib.sha256).hexdigest()
+            r = client.post("/webhook", data=raw, content_type="application/json",
+                            headers={"X-Razorpay-Signature": good})
+            self.assertEqual(r.status_code, 200)
+            self.assertEqual(r.get_json().get("received"), True)
+        finally:
+            appmod.RZP_WEBHOOK_SECRET = original
 
 
 if __name__ == "__main__":
