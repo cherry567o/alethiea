@@ -1118,11 +1118,16 @@ def api_upi_webhook():
 def webhook():
     payload = request.get_data()
     sig = request.headers.get("X-Razorpay-Signature", "")
+    # SECURITY: a Razorpay webhook is only trusted with a verified signature.
+    # With no secret configured we reject EVERYTHING — an unsigned call could
+    # otherwise forge a "payment captured" event and hand out a free ticket.
+    if not RZP_WEBHOOK_SECRET:
+        app.logger.warning("Razorpay webhook rejected: RAZORPAY_WEBHOOK_SECRET not configured")
+        return jsonify({"error": "webhook secret not configured"}), 503
     try:
-        if RZP_WEBHOOK_SECRET:
-            expected = hmac.new(RZP_WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
-            if not hmac.compare_digest(expected, sig):
-                return jsonify({"error": "invalid signature"}), 400
+        expected = hmac.new(RZP_WEBHOOK_SECRET.encode(), payload, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            return jsonify({"error": "invalid signature"}), 400
         event = json.loads(payload)
     except Exception as e:
         app.logger.error("Webhook error: %s", e)
