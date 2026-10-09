@@ -224,9 +224,12 @@ def deadline_info():
     }
 
 
-def make_qr(text: str) -> str:
-    """Return a QR code as a data: URL (PNG)."""
-    img = qrcode.make(text)
+def make_qr(text: str, big: bool = False) -> str:
+    """Return a QR code as a data: URL (PNG).
+    big=True → version H error correction + denser modules: survives print,
+    folds and some dirt on a poster."""
+    img = qrcode.make(text, error_correction=qrcode.constants.ERROR_CORRECT_H) if big \
+        else qrcode.make(text)
     buf = io.BytesIO()
     img.save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -441,6 +444,14 @@ def home():
     return serve_page("start.html")
 
 
+@app.get("/qr")
+def qr_generator_page():
+    """Standalone QR generator: makes QRs that point at THIS live site.
+    Use the URL it produces on posters/flyers — the flow (register → pay via
+    Razorpay → ticket QR) runs entirely on the hosted site."""
+    return serve_page("qr.html")
+
+
 @app.get("/start")
 def start_page():
     return serve_page("start.html")
@@ -473,11 +484,14 @@ def admin_page():
 
 @app.get("/api/qr")
 def api_qr():
-    """QR a given text/URL — used for the start-page QR."""
+    """QR a given text/URL — used for the start page and the /qr generator page.
+    big=1 gives a denser QR (higher error correction) that stays scannable when
+    printed on posters."""
     text = request.args.get("text", "")[:800]
     if not text:
         return jsonify({"error": "text required"}), 400
-    return jsonify({"qrDataUrl": make_qr(text)})
+    box = int(request.args.get("big", "0"))  # truthy → print-grade QR
+    return jsonify({"qrDataUrl": make_qr(text, big=box)})
 
 
 @app.get("/api/start-qr")
