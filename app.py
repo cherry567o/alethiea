@@ -11,6 +11,7 @@ Runs in DEMO MODE without Razorpay keys (payments simulated locally).
 import base64
 import hashlib
 import hmac
+import html
 import io
 import json
 import os
@@ -22,17 +23,19 @@ import time
 import urllib.error
 import urllib.request
 from urllib.parse import urlencode, unquote
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from email.message import EmailMessage
 from pathlib import Path
 
 import qrcode
-from flask import Flask, jsonify, redirect, request, send_from_directory
+from flask import Flask, g, has_request_context, jsonify, redirect, request, send_from_directory
 
 try:
     from dotenv import load_dotenv
     # load .env from THIS file's folder (works locally, under WSGI, and on PythonAnywhere)
-    load_dotenv(Path(__file__).parent / ".env")
+    if os.environ.get("ALETHEIA_NO_DOTENV") != "1":  # tests set this so a local .env cannot change their results
+        load_dotenv(Path(__file__).parent / ".env")
 except ImportError:
     pass
 
@@ -42,6 +45,12 @@ RZP_KEY_ID = os.environ.get("RAZORPAY_KEY_ID", "").strip()
 RZP_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "").strip()
 RZP_WEBHOOK_SECRET = os.environ.get("RAZORPAY_WEBHOOK_SECRET", "").strip()
 RZP_READY = bool(RZP_KEY_ID and RZP_KEY_SECRET and RZP_KEY_ID.startswith(("rzp_test_", "rzp_live_")))
+# The organizer's hosted RAZORPAY PAYMENT BUTTON (Dashboard → Payment Buttons).
+# Shown on the pay page as an extra "pay from my Razorpay account" option.
+# Button payments are NOT bound to a ticket (Razorpay doesn't pass notes from
+# the page), so they are confirmed manually in the admin panel / dashboard
+# report — same trust level as UPI-mode manual verification.
+RZP_BUTTON_ID = os.environ.get("RAZORPAY_BUTTON_ID", "pl_Tlni1BDdQ1O9bM").strip()
 
 # Payment mode: "upi" (direct UPI QR + manual verification) beats Razorpay when UPI_ID is set.
 # Stripe self-checkout (attendee pays on the same phone; payment auto-verified by Stripe).
@@ -54,12 +63,32 @@ STRIPE_SECRET_KEY = os.environ.get("STRIPE_SECRET_KEY", "").strip()
 # so TEST keys can never hijack real-guest payments away from the 0%-fee UPI flow.
 FORCED_MODE = os.environ.get("PAYMENT_MODE", "").strip().lower()
 RZP_LIVE = RZP_KEY_ID.startswith("rzp_live_")
-_auto_mode = ("stripe" if STRIPE_SECRET_KEY.startswith("sk_")
-              else ("razorpay" if RZP_READY and RZP_LIVE else
-                    ("upi" if UPI_ID else ("razorpay" if RZP_READY else "demo"))))
-PAYMENT_MODE = FORCED_MODE if FORCED_MODE in ("stripe", "razorpay", "upi", "demo") else _auto_mode
+# The fake "simulate payment" demo hands out free tickets, so it only exists when
+# ALLOW_DEMO=1 (local development). With nothing configured, bookings are refused.
+ALLOW_DEMO = os.environ.get("ALLOW_DEMO", "").strip() == "1"
+if STRIPE_SECRET_KEY.startswith("sk_"):
+    _auto_mode = "stripe"
+elif RZP_READY and RZP_LIVE:
+    _auto_mode = "razorpay"
+elif UPI_ID:
+    _auto_mode = "upi"
+elif RZP_READY:
+    _auto_mode = "razorpay"
+else:
+    _auto_mode = "demo" if ALLOW_DEMO else "off"
+_forced_ok = FORCED_MODE in ("stripe", "razorpay", "upi") or (FORCED_MODE == "demo" and ALLOW_DEMO)
+PAYMENT_MODE = FORCED_MODE if _forced_ok else _auto_mode
 
-ADMIN_KEY = os.environ.get("ADMIN_KEY", "changeme123")
+ADMIN_KEY = os.environ.get("ADMIN_KEY", "").strip()
+# Fail closed: NO default password. A missing/weak key (< 16 chars) disables every admin route.
+ADMIN_READY = len(ADMIN_KEY) >= 16 and ADMIN_KEY.lower() not in ("changeme123", "changeme")
+
+
+def _key_ok(supplied):
+    """Constant-time admin key check; always False when ADMIN_KEY is unset/weak."""
+    if not ADMIN_READY or not supplied:
+        return False
+    return hmac.compare_digest(str(supplied).encode(), ADMIN_KEY.encode())
 PORT = int(os.environ.get("PORT", "3000") or 3000)
 if PORT <= 0:  # some environments export PORT=0 — pick our predictable default
     PORT = 3000
@@ -75,6 +104,24 @@ SMTP_USER = os.environ.get("SMTP_USER", "").strip()
 SMTP_PASS = os.environ.get("SMTP_PASS", "").strip()  # Gmail: use an App Password, not the login password
 SMTP_FROM = os.environ.get("SMTP_FROM", "").strip() or SMTP_USER
 PER_PERSON_PRICE = 69  # rupees
+
+# Topics shown on the poster page. Visitors tick the ones they're curious about; the
+# email they get repeats those picks and carries their personal registration link.
+TOPICS = [
+    {"id": "spirituality", "title": "Spirituality"},
+    {"id": "afterlife", "title": "Life after death & the soul"},
+    {"id": "consciousness", "title": "Consciousness & the mind"},
+    {"id": "aliens", "title": "Aliens & life beyond Earth"},
+    {"id": "time", "title": "Time & reality"},
+    {"id": "karma", "title": "Karma, destiny & free will"},
+    {"id": "dreams", "title": "Dreams & the subconscious"},
+    {"id": "faith", "title": "God & faith"},
+    {"id": "astrology", "title": "Astrology & the unknown"},
+]
+LEAD_TTL_MS = 7 * 24 * 3600 * 1000  # a registration link works for 7 days
+# Email-first flow: scan QR -> enter email + interests -> personal link by email -> register -> pay.
+# Needs SMTP; set REQUIRE_EMAIL_LINK=0 to go back to open registration.
+EMAIL_FLOW = bool(SMTP_USER and SMTP_PASS) and os.environ.get("REQUIRE_EMAIL_LINK", "1").strip() != "0"
 # Pending bookings expire after 10 minutes without verified payment — keeps the
 # books clean. Money-safe: a late VERIFIED payment (Razorpay checkout verify / webhook)
 # still revives an expired booking, so money sent is never lost.
@@ -135,6 +182,79 @@ def _no_cache_html(resp):
         resp.headers["Cache-Control"] = "no-store, must-revalidate"
     return resp
 
+# ---------------- security headers + rate limiting ----------------
+
+CSP = ("default-src 'self'; img-src 'self' data: https://*.razorpay.com; "
+       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+       "font-src 'self' data: https://fonts.gstatic.com https://*.razorpay.com; "
+       "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; "
+       "connect-src 'self' https://*.razorpay.com; "
+       "frame-src https://api.razorpay.com https://checkout.razorpay.com; "
+       "frame-ancestors 'none'; base-uri 'self'; form-action 'self' https://api.razorpay.com")
+
+
+@app.after_request
+def _security_headers(resp):
+    h = resp.headers
+    h.setdefault("X-Content-Type-Options", "nosniff")
+    h.setdefault("X-Frame-Options", "DENY")
+    h.setdefault("Referrer-Policy", "no-referrer")
+    h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    h.setdefault("Permissions-Policy", "camera=(self), microphone=(), geolocation=()")
+    h.setdefault("Content-Security-Policy", CSP)
+    if request.path.startswith(("/api/admin", "/checkin", "/admin", "/door", "/api/status")):
+        h["Cache-Control"] = "no-store"
+    return resp
+
+
+_MEM_HITS = {}
+_RATE_RULES = [  # (path prefix, max requests, window seconds) per client IP
+    ("/api/register", 10, 600),
+    ("/api/interest", 5, 600),
+    ("/api/lead/", 30, 60),
+    ("/api/create-order", 20, 600),
+    ("/api/verify-payment", 30, 600),
+    ("/api/status/", 120, 60),
+    ("/api/qr", 30, 60),
+    ("/api/admin/", 60, 60),
+    ("/checkin/", 60, 60),
+    ("/webhook", 120, 60),
+]
+
+
+def _client_ip():
+    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    return request.headers.get("x-real-ip") or xff or request.remote_addr or "?"
+
+
+def _hit(bucket, window):
+    """Count one hit in the window (Upstash when configured, else per-process memory)."""
+    if REDIS_URL and REDIS_TOKEN:
+        key = f"aletheia:rl:{bucket}:{int(time.time() // window)}"
+        n = _redis_cmd("INCR", key)
+        if n is None:
+            return 0  # fail open on a Redis hiccup
+        if int(n) == 1:
+            _redis_cmd("EXPIRE", key, str(window * 2))
+        return int(n)
+    now = time.time()
+    hits = [t for t in _MEM_HITS.get(bucket, []) if now - t < window]
+    hits.append(now)
+    _MEM_HITS[bucket] = hits
+    if len(_MEM_HITS) > 5000:
+        _MEM_HITS.clear()
+    return len(hits)
+
+
+@app.before_request
+def _rate_limit():
+    for prefix, limit, window in _RATE_RULES:
+        if request.path.startswith(prefix):
+            if _hit(f"{_client_ip()}:{prefix}", window) > limit:
+                return jsonify({"error": "Too many requests. Please slow down."}), 429
+            break
+
+
 # ---------------- tiny JSON db (file locally, Upstash Redis on Vercel) ----------------
 
 # On Vercel the filesystem is read-only, so bookings must live in a cloud store.
@@ -150,8 +270,10 @@ def _redis_cmd(*parts):
         return None
     try:
         req = urllib.request.Request(
-            REDIS_URL.rstrip("/") + "/" + "/".join(urllib.request.quote(p, safe="") for p in parts),
-            headers={"Authorization": f"Bearer {REDIS_TOKEN}"},
+            REDIS_URL.rstrip("/"),
+            data=json.dumps([str(p) for p in parts]).encode("utf-8"),
+            headers={"Authorization": f"Bearer {REDIS_TOKEN}", "Content-Type": "application/json"},
+            method="POST",
         )
         with urllib.request.urlopen(req, timeout=8) as r:
             return json.loads(r.read().decode("utf-8")).get("result")
@@ -179,22 +301,82 @@ def _load():
 
 def _save(db):
     if REDIS_URL and REDIS_TOKEN:
-        _redis_cmd("SET", "aletheia:db", json.dumps(db))
+        if _redis_cmd("SET", "aletheia:db", json.dumps(db)) != "OK":
+            raise RuntimeError("database save failed")  # never confirm a payment we failed to record
         return
     DATA_FILE.write_text(json.dumps(db, indent=2), encoding="utf-8")
 
 
 DB = _load()
 
+_LOCK_KEY = "aletheia:lock"
+_LOCK_TTL = "40"  # seconds; longer than the SMTP timeout
+_LAST_RZP_POLL = {}
+
+
+@contextmanager
+def _db_lock():
+    """Serialise read-modify-write on the shared cloud DB (re-entrant per request);
+    reloads the DB once the lock is held so a stale copy never overwrites newer data."""
+    global DB
+    if not (REDIS_URL and REDIS_TOKEN):
+        yield
+        return
+    if has_request_context() and getattr(g, "lock_token", None):
+        yield
+        return
+    token = secrets.token_hex(8)
+    for _ in range(60):
+        if _redis_cmd("SET", _LOCK_KEY, token, "NX", "EX", _LOCK_TTL) == "OK":
+            break
+        time.sleep(0.1)
+    else:
+        raise RuntimeError("database busy")
+    DB = _load()
+    if has_request_context():
+        g.lock_token = token
+    try:
+        yield
+    finally:
+        if _redis_cmd("GET", _LOCK_KEY) == token:
+            _redis_cmd("DEL", _LOCK_KEY)
+        if has_request_context():
+            g.lock_token = None
+
+
+_LOCKED_PREFIXES = ("/api/interest", "/api/create-order", "/api/verify-payment", "/api/register", "/api/admin/", "/webhook", "/api/demo/")
+
+
+@app.before_request
+def _lock_begin():
+    if request.method != "POST" or not request.path.startswith(_LOCKED_PREFIXES):
+        return None
+    cm = _db_lock()
+    try:
+        cm.__enter__()
+    except RuntimeError:
+        return jsonify({"error": "Server is busy, please try again in a moment."}), 503
+    g.lock_cm = cm
+    return None
+
+
+@app.teardown_request
+def _lock_end(exc):
+    cm = g.pop("lock_cm", None) if has_request_context() else None
+    if cm:
+        cm.__exit__(None, None, None)
+
+
 # ---------------- helpers ----------------
 
 def public_base(request):
+    """Base URL for QR codes/links. Never trusts client-supplied forwarded headers."""
     if PUBLIC_BASE_URL:
         return PUBLIC_BASE_URL
-    # behind a proxy (e.g. PythonAnywhere), trust the forwarded host header
-    host = request.headers.get("X-Forwarded-Host") or request.host
-    scheme = request.headers.get("X-Forwarded-Proto") or request.scheme
-    return f"{scheme}://{host}".rstrip("/")
+    vurl = os.environ.get("VERCEL_PROJECT_PRODUCTION_URL") or ""
+    if vurl:
+        return (vurl if vurl.startswith("http") else "https://" + vurl).rstrip("/")
+    return request.host_url.rstrip("/")
 
 
 def _deadline_ts_from_env():
@@ -279,15 +461,15 @@ def _expire_stale_pendings():
     return changed
 
 
-def mark_paid(reg_id, paid_amount=None, source=""):
+def _mark_paid_locked(reg_id, paid_amount=None, source=""):
     reg = find_reg(reg_id)
     if not reg or reg["status"] == "paid":
-        return reg
+        return reg, False
     amount = paid_amount or reg["expectedAmount"]
     reg["status"] = "paid"
     reg["amountPaid"] = amount
     reg["paidAt"] = int(time.time() * 1000)  # shown in admin as 'accepted <time>'
-    reg["paidSource"] = source  # 'auto-upi' shows as 🤖 in the admin panel
+    reg["paidSource"] = source
     # Door PIN: 4 digits, required with the ticket at check-in so a stolen ticket
     # link alone can't burn someone's entry.
     reg["pin"] = f"{secrets.randbelow(10000):04d}"
@@ -295,13 +477,44 @@ def mark_paid(reg_id, paid_amount=None, source=""):
     if payment:
         payment.update({"status": "succeeded", "amount": amount, "paidAt": int(time.time() * 1000), "source": source})
     _save(DB)
-    # Email the ticket for security (attendee keeps a copy in their inbox).
-    if source != "demo" and SMTP_USER and SMTP_PASS:
-        if REDIS_URL and REDIS_TOKEN:  # serverless (Vercel): background threads freeze — send inline
-            send_ticket_email(dict(reg))
+    return reg, True
+
+
+def mark_paid(reg_id, paid_amount=None, source=""):
+    with _db_lock():
+        reg, newly = _mark_paid_locked(reg_id, paid_amount, source)
+    # Email the ticket (attendee keeps a copy in their inbox) - after the DB is saved.
+    if newly and source != "demo" and SMTP_USER and SMTP_PASS:
+        snapshot = dict(reg)
+        if REDIS_URL and REDIS_TOKEN:  # serverless (Vercel): background threads freeze - send inline
+            send_ticket_email(snapshot)
         else:
-            threading.Thread(target=send_ticket_email, args=(dict(reg),), daemon=True).start()
+            threading.Thread(target=send_ticket_email, args=(snapshot,), daemon=True).start()
     return reg
+
+
+def _mark_paid_if_amount_ok(reg_id, amount, source):
+    """Webhook/poll path: only issue a ticket if the paid amount covers the booking."""
+    reg = find_reg(reg_id)
+    try:
+        ok = bool(reg) and float(amount or 0) >= float(reg.get("expectedAmount", 0))
+    except (TypeError, ValueError):
+        ok = False
+    if not ok:
+        app.logger.warning("Payment ignored for %s: unknown booking or amount too low", reg_id)
+        return None
+    return mark_paid(reg_id, amount, source)
+
+
+def _set_email_status(reg_id, **fields):
+    try:
+        with _db_lock():
+            live = find_reg(reg_id)
+            if live:
+                live.update(fields)
+                _save(DB)
+    except Exception as exc:
+        app.logger.error("Could not record email status for %s: %s", reg_id, exc)
 
 
 def send_ticket_email(reg: dict):
@@ -318,7 +531,7 @@ def send_ticket_email(reg: dict):
         msg = EmailMessage()
         msg["Subject"] = f"Your Aletheia ticket {reg['id']}"
         msg["From"] = SMTP_FROM or SMTP_USER
-        msg["To"] = reg["email"]
+        msg["To"] = re.sub(r"[\r\n]", "", str(reg["email"]))
         msg.set_content(
             f"Hi {reg['name']},\n\n"
             f"Your payment of Rs.{reg['amountPaid']} for Aletheia is confirmed.\n\n"
@@ -334,22 +547,14 @@ def send_ticket_email(reg: dict):
         png_b64 = reg.get("ticketQrDataUrl", "").split("base64,", 1)[-1]
         if png_b64:
             msg.add_attachment(base64.b64decode(png_b64), maintype="image", subtype="png", filename=f"ticket-{reg['id']}.png")
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=20) as s:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
             s.starttls()
             s.login(SMTP_USER, SMTP_PASS)
             s.send_message(msg)
-        live = find_reg(reg["id"])
-        if live:
-            live["emailStatus"] = "sent"
-            live["emailedAt"] = int(time.time() * 1000)
-            _save(DB)
+        _set_email_status(reg["id"], emailStatus="sent", emailedAt=int(time.time() * 1000))
         app.logger.info("Ticket email sent to %s for %s", reg["email"], reg["id"])
     except Exception as e:
-        live = find_reg(reg.get("id", ""))
-        if live:
-            live["emailStatus"] = "failed"
-            live["emailError"] = str(e)[:140]
-            _save(DB)
+        _set_email_status(reg.get("id", ""), emailStatus="failed", emailError=str(e)[:140])
         app.logger.error("Ticket email failed for %s: %s", reg.get("id"), e)
 
 
@@ -511,6 +716,124 @@ def api_event_info():
 
 # ---------------- registration + payment ----------------
 
+# ---------------- email-first flow: interests -> personal link -> register ----------------
+
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _leads():
+    return DB.setdefault("leads", [])
+
+
+def _find_lead(token):
+    token = str(token or "")
+    if len(token) < 16:
+        return None
+    now = int(time.time() * 1000)
+    for lead in _leads():
+        if lead.get("token") == token and now - lead.get("createdAt", 0) < LEAD_TTL_MS:
+            return lead
+    return None
+
+
+def send_invite_email(lead, base):
+    """Email the topics, the person's picks and their personal registration link."""
+    link = f"{base}/register?link={lead['token']}"
+    picked = [t["title"] for t in TOPICS if t["id"] in lead["interests"]]
+    others = [t["title"] for t in TOPICS if t["id"] not in lead["interests"]]
+    greet = lead.get("name") or "there"
+    plain = (
+        f"Hi {greet},\n\n"
+        f"Thanks for your interest in Aletheia - a friendly evening talk about things that are not visible to our eyes.\n\n"
+        f"Topics you told us you are curious about:\n" + "".join(f"  - {t}\n" for t in picked) +
+        (f"\nAlso on the table that evening:\n" + "".join(f"  - {t}\n" for t in others) if others else "") +
+        f"\nSaturday, 21 November 2026, 6:30 to 8:00 PM (about 1.5 hours), Bangalore. Venue shared with ticket holders.\n"
+        f"Ticket: Rs. {PER_PERSON_PRICE} per person.\n\n"
+        f"Your personal registration link (valid 7 days):\n{link}\n\n"
+        f"Open it, enter your details, and pay securely with Razorpay (UPI, cards, netbanking). "
+        f"Your ticket and door PIN arrive by email right after.\n\n"
+        f"If you did not ask for this, just ignore this email.\n"
+    )
+    li = lambda items: "".join(f"<li>{html.escape(t)}</li>" for t in items)
+    page = (
+        f"<div style='font-family:system-ui,Segoe UI,sans-serif;max-width:520px;margin:auto;color:#1c1830;line-height:1.6'>"
+        f"<h2 style='margin-bottom:4px'>Aletheia</h2>"
+        f"<p style='margin-top:0;color:#6b6785'>Things that are not visible to our eyes</p>"
+        f"<p>Hi {html.escape(greet)}, thanks for your interest!</p>"
+        f"<p><b>Topics you are curious about</b></p><ul>{li(picked)}</ul>"
+        + (f"<p><b>Also on the table</b></p><ul>{li(others)}</ul>" if others else "") +
+        f"<p>Saturday, 21 November 2026 &middot; 6:30 to 8:00 PM &middot; Bangalore<br>Ticket: Rs. {PER_PERSON_PRICE} per person</p>"
+        f"<p><a href='{html.escape(link, quote=True)}' style='display:inline-block;background:#5b43d6;color:#fff;"
+        f"padding:12px 22px;border-radius:10px;text-decoration:none;font-weight:600'>Register &amp; pay securely</a></p>"
+        f"<p style='font-size:13px;color:#6b6785'>This personal link is valid for 7 days. Payment is handled by Razorpay. "
+        f"If you did not ask for this, ignore this email.</p></div>"
+    )
+    msg = EmailMessage()
+    msg["Subject"] = "Aletheia - your registration link"
+    msg["From"] = SMTP_FROM or SMTP_USER
+    msg["To"] = re.sub(r"[\r\n]", "", lead["email"])
+    msg.set_content(plain)
+    msg.add_alternative(page, subtype="html")
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as srv:
+        srv.starttls()
+        srv.login(SMTP_USER, SMTP_PASS)
+        srv.send_message(msg)
+
+
+@app.get("/api/config")
+def api_config():
+    return jsonify({"emailFlow": EMAIL_FLOW, "topics": TOPICS,
+                    "rzpButtonId": RZP_BUTTON_ID if PAYMENT_MODE == "razorpay" else ""})
+
+
+@app.post("/api/interest")
+def api_interest():
+    """Step 1 of the flow: email + picked topics -> personal registration link by email."""
+    if not EMAIL_FLOW:
+        return jsonify({"error": "Email sign-up is not available right now."}), 503
+    dl = deadline_info()
+    if dl and dl["closed"]:
+        return jsonify({"error": "Registrations are closed.", "closed": True}), 403
+    body = request.get_json(silent=True) or {}
+    email = str(body.get("email") or "").strip().lower()[:120]
+    name = str(body.get("name") or "").strip()[:80]
+    if not EMAIL_RE.match(email):
+        return jsonify({"error": "Please enter a valid email address."}), 400
+    valid = {t["id"] for t in TOPICS}
+    raw = body.get("interests") if isinstance(body.get("interests"), list) else []
+    interests = [i for i in dict.fromkeys(str(x) for x in raw) if i in valid]
+    if not interests:
+        return jsonify({"error": "Pick at least one topic you are curious about."}), 400
+
+    now = int(time.time() * 1000)
+    lead = next((l for l in _leads() if l.get("email") == email and now - l.get("createdAt", 0) < LEAD_TTL_MS), None)
+    if lead and now - lead.get("lastSentAt", 0) < 60_000:
+        return jsonify({"error": "We just emailed you - check your inbox (and spam) or try again in a minute."}), 429
+    if lead:
+        lead.update({"interests": interests, "name": name or lead.get("name", ""), "lastSentAt": now})
+    else:
+        lead = {"token": secrets.token_urlsafe(16), "email": email, "name": name,
+                "interests": interests, "createdAt": now, "lastSentAt": now}
+        _leads().append(lead)
+    _save(DB)
+    try:
+        send_invite_email(lead, public_base(request))
+    except Exception as e:
+        app.logger.error("Invite email failed for %s: %s", email, e)
+        return jsonify({"error": "We could not send the email. Please check the address and try again."}), 502
+    return jsonify({"ok": True})
+
+
+@app.get("/api/lead/<token>")
+def api_lead(token):
+    """Lets the register page prefill the verified email and the person's topic picks."""
+    lead = _find_lead(token)
+    if not lead:
+        return jsonify({"error": "This link is invalid or has expired. Please request a new one."}), 404
+    titles = [t["title"] for t in TOPICS if t["id"] in lead.get("interests", [])]
+    return jsonify({"email": lead["email"], "name": lead.get("name", ""), "interests": titles})
+
+
 @app.post("/api/register")
 def api_register():
     dl = deadline_info()
@@ -525,10 +848,21 @@ def api_register():
     except (TypeError, ValueError):
         persons = 1
 
+    lead = None
+    if EMAIL_FLOW:
+        lead = _find_lead(str(body.get("token") or ""))
+        if not lead:
+            return jsonify({"error": "Please register with the link we email you. Enter your email on the start page to get it.",
+                            "needLink": True}), 403
+        email = lead["email"]  # bound to the address that received the link, not the form field
+
     if not name or not email:
         return jsonify({"error": "Name and email are required."}), 400
     if not re.match(r"^[^\s@]+@[^\s@]+\.[^\s@]+$", email):
         return jsonify({"error": "Please enter a valid email."}), 400
+
+    if PAYMENT_MODE == "off":
+        return jsonify({"error": "Bookings are not open yet - payments are not configured."}), 503
 
     _expire_stale_pendings()  # stale pendings must not block dedupe below
 
@@ -578,6 +912,9 @@ def api_register():
         "createdAt": now_ms,  # ms — JS Date() expects milliseconds
         "expiresAt": now_ms + PAYMENT_TIMEOUT_MS,  # 10-min payment window
     }
+    if lead:
+        reg["interests"] = list(lead.get("interests", []))
+        lead["registeredId"] = reg["id"]
 
     # ---- STRIPE MODE: attendee pays themselves on the same phone; auto-verified ----
     if PAYMENT_MODE == "stripe":
@@ -671,8 +1008,7 @@ def api_status(reg_id):
     # (The webhook still revives expired bookings when real money arrives.)
     if reg["status"] == "pending" and int(time.time() * 1000) - reg.get("createdAt", 0) > PAYMENT_TIMEOUT_MS:
         reg["status"] = "expired"
-        reg["expiredAt"] = int(time.time() * 1000)
-        _save(DB)
+        reg["expiredAt"] = int(time.time() * 1000)  # in memory only: a lock-free GET must not rewrite the shared DB
 
     # Expose UPI claim state so the pay page can show the right panel
     payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
@@ -698,24 +1034,27 @@ def api_status(reg_id):
             try:
                 link = rzp_fetch_payment_link(payment["paymentLinkId"])
                 if link.get("status") == "paid":
-                    mark_paid(reg_id, rzp_link_paid_amount(link), "razorpay-poll")
+                    _mark_paid_if_amount_ok(reg_id, rzp_link_paid_amount(link), "razorpay-poll")
             except Exception:
                 pass
         reg = find_reg(reg_id)
 
-    # Live Razorpay STANDARD Checkout: poll the order's payments if the browser's
-    # verify call never made it back (guest closed the tab before the handler ran).
-    if RZP_READY and reg["status"] == "pending":
+    # Razorpay STANDARD Checkout safety net: if the browser's verify call never arrived
+    # (tab closed right after paying), look for a captured payment on any order we made.
+    if RZP_READY and reg["status"] in ("pending", "expired"):
         payment = next((p for p in DB["payments"] if p["ref"] == reg_id), None)
-        if payment and payment.get("rzpOrderId"):
+        ids = (payment or {}).get("rzpOrderIds") or ([payment["rzpOrderId"]] if payment and payment.get("rzpOrderId") else [])
+        if ids and time.time() - _LAST_RZP_POLL.get(reg_id, 0) > 8:
+            _LAST_RZP_POLL[reg_id] = time.time()
             try:
-                pays = _rzp_request("GET", f"/orders/{payment['rzpOrderId']}/payments")
-                for p in pays.get("items", []):
-                    if p.get("status") == "captured":
-                        mark_paid(reg_id, p.get("amount", 0) / 100, "razorpay-poll")
+                for oid in ids:
+                    pays = _rzp_request("GET", f"/orders/{oid}/payments")
+                    cap = next((p for p in pays.get("items", []) if p.get("status") == "captured"), None)
+                    if cap:
+                        _mark_paid_if_amount_ok(reg_id, cap.get("amount", 0) / 100, "razorpay-poll")
                         break
-            except Exception:
-                pass
+            except Exception as e:
+                app.logger.warning("Razorpay order poll failed for %s: %s", reg_id, e)
         reg = find_reg(reg_id)
 
     # The entry-ticket QR exists ONLY after the admin verifies payment (anti-scam).
@@ -774,10 +1113,16 @@ def api_create_order():
         app.logger.error("Razorpay order failed for %s: %s", reg["id"], e)
         return jsonify({"error": "Could not reach Razorpay. Check your internet and try again."}), 502
 
-    reg["rzpOrderId"] = order.get("id")
+    oid = order.get("id")
+    reg["rzpOrderId"] = oid
+    ids = reg.setdefault("rzpOrderIds", [])
+    if oid not in ids:
+        ids.append(oid)
+    del ids[:-10]
     payment = next((p for p in DB["payments"] if p["ref"] == reg["id"]), None)
     if payment:
-        payment["rzpOrderId"] = order.get("id")
+        payment["rzpOrderId"] = oid
+        payment["rzpOrderIds"] = list(ids)
         payment["provider"] = "razorpay"
     _save(DB)
     return jsonify({
@@ -811,12 +1156,17 @@ def api_verify_payment():
     # matches no booking never marks anything paid.
     reg = None
     candidate = find_reg((body.get("reg_id") or "").strip())
-    if candidate and candidate.get("rzpOrderId") == order_id:
+    def _has_order(r):
+        return order_id in (r.get("rzpOrderIds") or [r.get("rzpOrderId")])
+    if candidate and _has_order(candidate):
         reg = candidate
     if reg is None:
-        reg = next((r for r in DB["registrations"] if r.get("rzpOrderId") == order_id), None)
+        reg = next((r for r in DB["registrations"] if _has_order(r)), None)
     if reg is None:
         return jsonify({"error": "order does not match any booking"}), 400
+    if reg["status"] in ("refunded", "cancelled"):
+        app.logger.error("Verified payment %s arrived for %s booking %s", payment_id, reg["status"], reg["id"])
+        return jsonify({"error": "This booking was cancelled. Contact the organiser with payment id " + payment_id}), 409
     if reg["status"] == "paid":
         return jsonify({"ok": True, "ticket": reg["id"], "already": True})
     mark_paid(reg["id"], reg.get("expectedAmount"), "razorpay")
@@ -878,6 +1228,15 @@ def api_admin_refund():
         return jsonify({"error": "Registration not found"}), 404
     if reg["status"] != "paid":
         return jsonify({"error": "Only paid tickets can be refunded."}), 400
+    pay_rec = next((p for p in DB["payments"] if p["ref"] == reg["id"]), None)
+    if pay_rec and pay_rec.get("provider") == "razorpay":
+        amt = reg["amountPaid"] or reg["expectedAmount"]
+        reg["status"] = "refunded"
+        reg["refund"] = {"vpa": "razorpay", "amount": amt, "at": int(time.time() * 1000)}
+        pay_rec["status"] = "refunded"
+        _save(DB)
+        return jsonify({"ok": True, "status": "refunded", "amount": amt,
+                        "note": "Ticket cancelled. Now return the money: Razorpay Dashboard > Transactions > Payments > open the payment > Refund."})
     vpa = (body.get("vpa") or "").strip().lower()
     if not re.match(r"^[a-z0-9.\-_]{2,50}@[a-z]{2,20}$", vpa):
         return jsonify({"error": "Enter the attendee's UPI ID in the form name@bank."}), 400
@@ -924,12 +1283,20 @@ def webhook():
     if event_type == "payment_link.paid":
         reg_id = (entity.get("notes") or {}).get("registrationId") or entity.get("reference_id")
         if reg_id:
-            mark_paid(reg_id, rzp_link_paid_amount(entity), "razorpay-webhook")
+            _mark_paid_if_amount_ok(reg_id, rzp_link_paid_amount(entity), "razorpay-webhook")
             app.logger.info("Payment completed for %s", reg_id)
+    elif event_type == "order.paid":
+        reg_id = (entity.get("notes") or {}).get("registrationId") or entity.get("receipt")
+        if reg_id:
+            _mark_paid_if_amount_ok(reg_id, (entity.get("amount_paid") or 0) / 100, "razorpay-webhook")
+            app.logger.info("Order paid for %s", reg_id)
     elif event_type == "payment.captured":
         reg_id = (entity.get("notes") or {}).get("registrationId")
+        if not reg_id and entity.get("order_id"):
+            rec = next((p for p in DB["payments"] if entity["order_id"] in (p.get("rzpOrderIds") or [p.get("rzpOrderId")])), None)
+            reg_id = rec["ref"] if rec else None
         if reg_id:
-            mark_paid(reg_id, entity.get("amount", 0) / 100, "razorpay-webhook")
+            _mark_paid_if_amount_ok(reg_id, entity.get("amount", 0) / 100, "razorpay-webhook")
             app.logger.info("Payment captured for %s", reg_id)
 
     return jsonify({"received": True})
@@ -938,8 +1305,8 @@ def webhook():
 # ---------------- admin ----------------
 
 def require_admin():
-    key = request.headers.get("x-admin-key") or request.args.get("key")
-    if key != ADMIN_KEY:
+    # Header only - keys in URLs leak into browser history, logs and Referer headers.
+    if not _key_ok(request.headers.get("x-admin-key")):
         return jsonify({"error": "Unauthorized"}), 401
     return None
 
@@ -993,35 +1360,22 @@ def api_admin_checkin():
 
 @app.get("/checkin/<reg_id>")
 def checkin_scan(reg_id):
-    """URL encoded in the ticket QR — scanning at the door performs check-in (admin device).
-    Requires the attendee's 4-digit PIN (typed by the organizer) so a copied ticket
-    link alone can never check anyone in."""
+    """Public ticket-QR landing page. Read-only: shows ticket status only.
+    Door check-ins are done from /door (admin key sent in a header, never in the URL).
+    All user-supplied text is HTML-escaped (stored-XSS fix)."""
     reg = find_reg(reg_id)
     if not reg:
         return "Ticket not found", 404
-    if request.args.get("key") == ADMIN_KEY and reg["status"] == "paid":
-        pin = (request.args.get("pin") or "").strip()
-        if pin != reg.get("pin"):
-            return f"""<h2>🔢 PIN required</h2>
-<p>{reg['name']} · {reg['id']}</p>
-<form method="get" action="/checkin/{reg_id}">
-<input type="hidden" name="key" value="{ADMIN_KEY}" />
-<input name="pin" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="4-digit PIN" style="font-size:20px; padding:8px; width:120px; text-align:center;" required />
-<button style="font-size:16px; padding:8px 16px;">Check in →</button>
-</form>
-<p style="color:#888">Ask the attendee for the PIN shown on their ticket.</p>"""
-        reg["checkedIn"] = min(reg["checkedIn"] + 1, reg["persons"])
-        _save(DB)
-        return f"""<h2>✅ Checked in {reg['checkedIn']}/{reg['persons']}</h2>
-<p>{reg['name']} · {reg['id']}</p>
-<p><a href="/admin.html?key={ADMIN_KEY}">Back to monitor</a> · <a href="/checkin/{reg_id}?key={ADMIN_KEY}">Scan next person</a></p>"""
+    name = html.escape(str(reg.get("name", "")))
+    rid = html.escape(str(reg["id"]))
+    persons = int(reg.get("persons", 1))
     if reg["status"] == "refunded":
-        return f"<h2>💸 Refunded</h2><p>{reg['name']} · {reg['id']}</p><p>This booking was refunded by the organizer - entry cancelled.</p>"
+        return f"<h2>Refunded</h2><p>{name} · {rid}</p><p>This booking was refunded by the organizer - entry cancelled.</p>"
     if reg["status"] != "paid":
-        return f"<h2>⏳ Payment pending</h2><p>{reg['name']} · {reg['id']}</p><p><a href='/pay/{reg_id}'>Complete payment</a></p>"
-    # Never leak the admin key on public ticket pages — only link back to the monitor if the key was supplied.
-    back_link = f"<p><a href='/admin.html?key={ADMIN_KEY}'>Back to monitor</a></p>" if request.args.get("key") == ADMIN_KEY else ""
-    return f"<h2>🎟️ Valid ticket</h2><p>{reg['name']} · {reg['persons']} person(s) · checked in {reg['checkedIn']}/{reg['persons']}</p>{back_link}"
+        return f"<h2>Payment pending</h2><p>{name} · {rid}</p><p><a href='/pay/{rid}'>Complete payment</a></p>"
+    return (f"<h2>Valid ticket</h2><p>{name} · {persons} person(s) · checked in "
+            f"{int(reg.get('checkedIn', 0))}/{persons}</p>"
+            f"<p>Door staff: open the <a href='/door'>door scanner</a> to check this ticket in.</p>")
 
 
 if __name__ == "__main__":
@@ -1035,7 +1389,11 @@ if __name__ == "__main__":
     print(f"\nAletheia running at {PUBLIC_BASE_URL or f'http://localhost:{PORT}'}")
     print("   Start QR page:   /start")
     print("   Registration:    /register")
-    print(f"   Admin monitor:   /admin.html (key: {ADMIN_KEY})")
+    print("   Admin monitor:   /admin.html (key sent in the x-admin-key header)")
+    if not ADMIN_READY:
+        print("   WARNING: ADMIN_KEY missing/weak (need 16+ chars) - admin routes are DISABLED.")
+    if PAYMENT_MODE == "off":
+        print("   WARNING: no payment method configured - bookings are refused.")
     if DEADLINE_TS:
         state = "CLOSED" if time.time() >= DEADLINE_TS else "open"
         print(f"   Booking deadline: {REG_DEADLINE} (registrations {state})")

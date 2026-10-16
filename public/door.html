@@ -70,7 +70,7 @@
 
     <div class="keyrow">
       <label>Admin key</label>
-      <input id="adminKey" type="password" placeholder="changeme123" />
+      <input id="adminKey" type="password" placeholder="Admin key" />
     </div>
 
     <div class="video-box off" id="videoBox">
@@ -98,9 +98,11 @@
 
   <script>
     const KEY = new URLSearchParams(location.search).get("key") || sessionStorage.getItem("doorKey") || "";
-    if (KEY) { document.getElementById("adminKey").value = KEY; sessionStorage.setItem("doorKey", KEY); }
+    if (KEY) { document.getElementById("adminKey").value = KEY; sessionStorage.setItem("doorKey", KEY); sessionStorage.setItem("adminKey", KEY); }
+    if (location.search.includes("key=")) history.replaceState(null, "", location.pathname);
+    const esc = (v) => String(v == null ? "" : v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     // carry the key through to the monitor link when we have it
-    document.getElementById("monitorLink").href = KEY ? "/admin.html?key=" + encodeURIComponent(KEY) : "/admin.html";
+    document.getElementById("monitorLink").href = "/admin.html";
     const keyNow = () => document.getElementById("adminKey").value.trim();
     let lastScan = "";
     let lastScanAt = 0;
@@ -118,9 +120,9 @@
       lastScan = id; lastScanAt = now;
 
       try {
-        const res = await fetch("/api/admin/checkin?key=" + encodeURIComponent(key), {
+        const res = await fetch("/api/admin/checkin", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-admin-key": key },
           body: JSON.stringify({ id, pin }),
         });
         const data = await res.json();
@@ -146,12 +148,12 @@
     function showResult(kind, message, data) {
       const el = document.getElementById("result");
       if (message) {
-        el.innerHTML = `<div class="ticket-card ${kind}"><h2>${kind === "warn" ? "⏳ Hold on" : "✗ Can't check in"}</h2><div class="meta">${message}</div></div>`;
+        el.innerHTML = `<div class="ticket-card ${kind}"><h2>${kind === "warn" ? "⏳ Hold on" : "✗ Can't check in"}</h2><div class="meta">${esc(message)}</div></div>`;
         return;
       }
       el.innerHTML = `<div class="ticket-card ok">
-        <h2>✅ Welcome, ${data.name || "guest"}!</h2>
-        <div class="meta">${data.checkedIn} of ${data.persons} checked in · ticket ${data.id || ""}</div>
+        <h2>✅ Welcome, ${esc(data.name || "guest")}!</h2>
+        <div class="meta">${data.checkedIn} of ${data.persons} checked in · ticket ${esc(data.id || "")}</div>
         <div class="big">${data.checkedIn < data.persons ? (data.persons - data.checkedIn) + " more in this group" : "Group complete 🎉"}</div>
       </div>`;
     }
@@ -161,7 +163,7 @@
       const key = keyNow();
       if (!key) return;
       try {
-        const res = await fetch("/api/admin/data?key=" + encodeURIComponent(key));
+        const res = await fetch("/api/admin/data", { headers: { "x-admin-key": key } });
         if (!res.ok) return;
         const d = await res.json();
         const paid = d.registrations.filter(r => r.status === "paid");

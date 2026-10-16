@@ -76,6 +76,18 @@
     .dl-closed { margin-top: 16px; font-size: 13.5px; color: #ff8a8a; line-height: 1.6; }
     .cta.closed { background: #161936; color: #6f6d8a; border: 1px solid #2e3358; pointer-events: none; filter: grayscale(1); }
     .hidden { display: none; }
+    .lead-box { margin: 0 0 18px; text-align: left; }
+    .lead-box .t { color: #f5c542; font-weight: bold; font-size: 14px; margin-bottom: 4px; text-align: center; }
+    .lead-box .hint { color: #a8a6c0; font-size: 12.5px; text-align: center; margin-bottom: 12px; line-height: 1.6; }
+    .lead-box input[type=email], .lead-box input[type=text] { width: 100%; padding: 12px; margin-bottom: 8px; border-radius: 10px; border: 1px solid #2e3358; background: #0f1126; color: #fff; font-size: 15px; }
+    .lead-box .pick { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 14px; justify-content: center; }
+    .lead-box .pick label { cursor: pointer; position: relative; }
+    .lead-box .pick input { position: absolute; opacity: 0; }
+    .lead-box .pick span { display: inline-block; background: #161936; border: 1px solid #2e3358; padding: 7px 12px; border-radius: 999px; font-size: 12.5px; color: #cfcde4; }
+    .lead-box .pick input:checked + span { background: #f5c542; color: #1a1530; border-color: #f5c542; font-weight: bold; }
+    .lead-box .pick input:focus-visible + span { outline: 2px solid #52e5a3; }
+    .lead-msg { margin-top: 10px; font-size: 13.5px; line-height: 1.6; text-align: center; }
+    .lead-msg.ok { color: #52e5a3; } .lead-msg.bad { color: #ff8a80; }
   </style>
 </head>
 <body>
@@ -106,14 +118,24 @@
     <p class="dl-open hidden" id="dlOpen"></p>
     <p class="dl-closed hidden" id="dlClosed">Registrations closed</p>
 
+    <div class="lead-box hidden" id="leadBox">
+      <div class="t">✉️ Get your personal registration link</div>
+      <div class="hint">Tick what you're curious about and enter your email. We'll mail you the topics and a link to register.</div>
+      <div class="pick" id="topicPick" role="group" aria-label="Topics you are curious about"></div>
+      <input type="text" id="leadName" placeholder="Your name (optional)" autocomplete="name" maxlength="80" />
+      <input type="email" id="leadEmail" placeholder="you@example.com" autocomplete="email" required />
+      <button type="button" class="cta" id="leadBtn">Email me the registration link →</button>
+      <div class="lead-msg" id="leadMsg" role="status" aria-live="polite"></div>
+    </div>
+
     <a class="cta" id="enterBtn" href="/register">Enter — book your spot →</a>
 
     <p class="muted">₹69 per person · runs ~1.5 hours · pay with any UPI app — GPay / PhonePe / Paytm<br />Your entry ticket QR is generated after payment.</p>
 
     <div class="steps">
       <span><b>1</b> Scan</span>
-      <span><b>2</b> Register</span>
-      <span><b>3</b> Pay ₹69</span>
+      <span><b>2</b> Email link</span>
+      <span><b>3</b> Register &amp; pay ₹69</span>
       <span><b>4</b> Get ticket</span>
     </div>
   </div>
@@ -138,6 +160,7 @@
             const btn = document.getElementById("enterBtn");
             btn.classList.add("closed");
             btn.textContent = "Registrations closed";
+            const lb = document.getElementById("leadBox"); if (lb) lb.classList.add("hidden");
             if (ev.deadlineTs) {
               const d = new Date(ev.deadlineTs);
               closed.textContent = "Registrations closed on " + d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" }) + ".\u00A0 Tickets already booked stay valid.";
@@ -155,6 +178,45 @@
           .then((r) => r.json())
           .then((d) => { document.getElementById("startQr").src = d.qrDataUrl; });
       });
+    // ---- email-first flow: topics + email -> personal registration link ----
+    fetch("/api/config").then((r) => r.json()).then((cfg) => {
+      if (!cfg.emailFlow) return;                       // flow off: the plain "Enter" button stays
+      document.getElementById("enterBtn").classList.add("hidden");
+      document.getElementById("leadBox").classList.remove("hidden");
+      const pick = document.getElementById("topicPick");
+      cfg.topics.forEach((t) => {
+        const label = document.createElement("label");
+        const cb = document.createElement("input");
+        cb.type = "checkbox"; cb.value = t.id;
+        const span = document.createElement("span");
+        span.textContent = t.title;
+        label.appendChild(cb); label.appendChild(span); pick.appendChild(label);
+      });
+    }).catch(() => {});
+
+    document.getElementById("leadBtn").addEventListener("click", async () => {
+      const msg = document.getElementById("leadMsg");
+      const btn = document.getElementById("leadBtn");
+      const say = (cls, text) => { msg.className = "lead-msg " + cls; msg.textContent = text; };
+      const email = document.getElementById("leadEmail").value.trim();
+      const interests = [...document.querySelectorAll("#topicPick input:checked")].map((c) => c.value);
+      if (!email) { say("bad", "Please enter your email."); return; }
+      if (!interests.length) { say("bad", "Tick at least one topic you're curious about."); return; }
+      btn.disabled = true; btn.textContent = "Sending…"; say("", "");
+      try {
+        const res = await fetch("/api/interest", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, name: document.getElementById("leadName").value.trim(), interests }),
+        });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.error || "Something went wrong. Please try again.");
+        say("ok", "✅ Done! Check your inbox (and spam folder) for your personal registration link. It works for 7 days.");
+        btn.textContent = "Email sent";
+      } catch (err) {
+        say("bad", err.message);
+        btn.disabled = false; btn.textContent = "Email me the registration link →";
+      }
+    });
   </script>
 </body>
 </html>

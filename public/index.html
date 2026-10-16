@@ -236,7 +236,12 @@
           <a id="payOnPhone" href="#" style="display:block; padding:13px 8px; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:14px; font-weight:bold; text-align:center; text-decoration:none;">⚙️ Other UPI app</a>
         </div>
         <a id="payOnPhoneSolo" href="#" style="display:none; width:100%; margin-top:12px; padding:13px; border:none; border-radius:10px; background:#123c2a; border:1px solid #1e6b4a; color:#52e5a3; font-size:15px; font-weight:bold; text-align:center; text-decoration:none;">Pay ₹69 × persons on this phone →</a>
-        <button id="payRzp" type="button" style="display:none; width:100%; margin-top:12px; padding:14px; border-radius:10px; background:#0d2b3e; border:1px solid #1e6b8a; color:#bfe6ff; font-size:15px; font-weight:bold; text-align:center; cursor:pointer; font-family:inherit;">Pay securely — card / UPI / netbanking →</button>
+        <button id="payRzp" type="button" style="display:none; width:100%; margin-top:12px; padding:14px; border-radius:10px; background:#5b43d6; border:1px solid #7a63e0; color:#fff; font-size:15px; font-weight:bold; text-align:center; cursor:pointer; font-family:inherit;">Pay securely — card / UPI / netbanking →</button>
+        <div id="rzpButtonWrap" style="display:none; margin-top:14px; text-align:center;">
+          <div style="font-size:12px; color:#8f8dab; margin:6px 0 10px; line-height:1.6;">…or pay with the event's hosted Razorpay button — payments reach the organizer's Razorpay account directly:</div>
+          <form id="rzpButtonForm"></form>
+          <div style="font-size:11px; color:#6f6d8a; margin-top:8px;">Button payments are confirmed manually at the door (keep your payment screenshot until your ticket is confirmed).</div>
+        </div>
         <div id="upiHint" class="hidden" style="margin-top:10px; font-size:12px; color:#8f8dab; text-align:center; line-height:1.6;">Tap an app — it opens with ₹<span id="hintAmt">69</span> and your ticket note pre-filled. Didn't open, or opened without the amount? Tap the button again, or use <b style="color:#cfcde4">Pay manually</b> below. On a laptop? Open this page in <b style="color:#cfcde4">Chrome on your phone</b>.</div>
         <div id="manualPay" class="hidden" style="margin-top:12px; border:1px dashed rgba(143,141,171,0.4); border-radius:10px; padding:12px 14px; background:rgba(143,141,171,0.05);">
           <div style="font-size:13px; font-weight:bold; color:#cfcde4; text-align:center;">Pay manually — works every time</div>
@@ -372,6 +377,7 @@
       btn.textContent = "Creating payment…";
 
       const payload = {
+        token: regLink,
         name: document.getElementById("name").value.trim(),
         email: document.getElementById("email").value.trim(),
         upiName: document.getElementById("upiName").value.trim(),
@@ -450,6 +456,7 @@
           rzpBtn.style.display = "block";
           rzpBtn.textContent = "Pay " + rs(data.expectedAmount || data.amount) + " securely — card / UPI / netbanking →";
         }
+        showRzpButton();
         ["upiHint", "manualPay", "noteBox", "payWarn"].forEach((id) => {
           const el = document.getElementById(id);
           if (el) el.classList.add("hidden");
@@ -585,6 +592,26 @@
       document.getElementById("paidAmount").textContent = rs(r.amountPaid);
     }
 
+    // ---- Razorpay Payment Button (organizer's hosted button from their Razorpay account) ----
+    let rzpButtonCfg = null;
+    async function showRzpButton() {
+      const wrap = document.getElementById("rzpButtonWrap");
+      if (!wrap) return;
+      try {
+        if (!rzpButtonCfg) rzpButtonCfg = await (await fetch("/api/config")).json();
+      } catch (_) { rzpButtonCfg = {}; }
+      if (!rzpButtonCfg.rzpButtonId) return; // no button configured
+      const form = document.getElementById("rzpButtonForm");
+      const prev = form.querySelector("script");
+      if (prev) prev.remove();
+      const s = document.createElement("script");
+      s.src = "https://checkout.razorpay.com/v1/payment-button.js";
+      s.dataset.paymentButtonId = rzpButtonCfg.rzpButtonId;
+      s.async = true;
+      form.appendChild(s);
+      wrap.style.display = "block";
+    }
+
     // ---- Razorpay Standard Checkout ----
     function loadRzpScript(cb) {
       if (window.Razorpay) return cb();
@@ -650,6 +677,41 @@
       await fetch("/api/demo/pay/" + current.id, { method: "POST" });
       checkStatus();
     });
+
+    // ---- email-first flow: /register?link=TOKEN comes from the personal email ----
+    const regLink = new URLSearchParams(location.search).get("link") || "";
+    (async () => {
+      if (/^\/pay\//.test(location.pathname) || new URLSearchParams(location.search).get("t")) return; // existing ticket pages
+      let cfg;
+      try { cfg = await (await fetch("/api/config")).json(); } catch (_) { return; }
+      if (!cfg.emailFlow) return;
+      const form = document.getElementById("regForm");
+      const block = (text) => {
+        form.style.display = "none";
+        const box = document.createElement("div");
+        box.className = "closed-box";
+        const b = document.createElement("b"); b.textContent = text;
+        const a = document.createElement("a"); a.href = "/start"; a.textContent = "Get your registration link →";
+        box.appendChild(b); box.appendChild(document.createElement("br")); box.appendChild(a);
+        form.parentNode.insertBefore(box, form);
+      };
+      if (!regLink) { block("Registration is by personal link."); return; }
+      try {
+        const res = await fetch("/api/lead/" + encodeURIComponent(regLink));
+        const d = await res.json();
+        if (!res.ok) { block(d.error || "This link is invalid or has expired."); return; }
+        const email = document.getElementById("email");
+        email.value = d.email; email.readOnly = true;           // the verified address the link was sent to
+        const nm = document.getElementById("name");
+        if (d.name && !nm.value) nm.value = d.name;
+        if (d.interests && d.interests.length) {
+          const p = document.createElement("p");
+          p.style.cssText = "font-size:12.5px;color:#9fe8c6;margin:0 0 12px;line-height:1.6";
+          p.textContent = "Your topics: " + d.interests.join(" · ");
+          form.parentNode.insertBefore(p, form);
+        }
+      } catch (_) { block("Could not check your link. Please try again."); }
+    })();
 
     // Direct /pay/:id visits (QR rescans, success_url redirect) — also accepts /index.html?t=ID
     // (the Vercel fallback redirect when the serverless bundle lacks the page file)

@@ -173,14 +173,23 @@
     let webhookLog = [];
     let query = "";
     let filter = "all";
-    const KEY = new URLSearchParams(location.search).get("key") || "";
-    const authUrl = (u) => u + (u.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(KEY);
+    // Admin key lives only in this tab's sessionStorage and is sent in a header - never in URLs.
+    const KEY = new URLSearchParams(location.search).get("key")
+      || sessionStorage.getItem("adminKey") || sessionStorage.getItem("doorKey")
+      || (prompt("Admin key") || "");
+    if (KEY) sessionStorage.setItem("adminKey", KEY);
+    if (location.search.includes("key=")) history.replaceState(null, "", location.pathname);
+    const adminFetch = async (u, o = {}) => {
+      const r = await fetch(u, { ...o, headers: { ...(o.headers || {}), "x-admin-key": KEY } });
+      if (r.status === 401) sessionStorage.removeItem("adminKey");
+      return r;
+    };
 
     async function refresh() {
       try {
-        const res = await fetch(authUrl("/api/admin/data"));
+        const res = await adminFetch("/api/admin/data");
         if (res.status === 401) {
-          document.getElementById("rows").innerHTML = `<tr><td colspan="9" class="empty">🔒 Wrong admin key. Add <code>?key=YOUR_ADMIN_KEY</code> to the URL.</td></tr>`;
+          document.getElementById("rows").innerHTML = `<tr><td colspan="9" class="empty">🔒 Wrong admin key. Reload the page to enter it again.</td></tr>`;
           return;
         }
         const data = await res.json();
@@ -355,13 +364,14 @@
     document.getElementById("refundClose").addEventListener("click", () => document.getElementById("refundModal").classList.remove("open"));
     document.getElementById("refundGo").addEventListener("click", async () => {
       const vpa = document.getElementById("refundVpa").value.trim();
-      const res = await fetch(authUrl("/api/admin/refund"), {
+      const res = await adminFetch("/api/admin/refund", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: refundId, vpa }),
       });
       const d = await res.json();
       if (!res.ok) { alert(d.error || "Refund failed"); return; }
+      if (d.note) { alert(d.note); document.getElementById("refundModal").classList.remove("open"); refresh(); return; }
       document.getElementById("refundAsk").style.display = "none";
       document.getElementById("refundDone").style.display = "";
       document.getElementById("refundAmt").textContent = "₹" + d.amount;
@@ -377,7 +387,7 @@
       if (checkinBtn) {
         if (checkinBtn.disabled) return;
         checkinBtn.disabled = true;
-        await fetch(authUrl("/api/admin/checkin"), {
+        await adminFetch("/api/admin/checkin", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: checkinBtn.dataset.id }),
@@ -398,7 +408,7 @@
         btn.disabled = false;
         return;
       }
-      await fetch(authUrl(ok ? "/api/admin/verify" : "/api/admin/reject"), {
+      await adminFetch(ok ? "/api/admin/verify" : "/api/admin/reject", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ id: btn.dataset.id }),

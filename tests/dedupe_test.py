@@ -11,6 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 # Must be set BEFORE importing app: forces file mode (never touch Upstash cloud DB)
+os.environ["ALETHEIA_NO_DOTENV"] = "1"  # hermetic: ignore any local .env
+os.environ["UPI_ID"] = "7795498451@ptyes"
+os.environ["ADMIN_KEY"] = "test-admin-key-0123456789abcdef"
+os.environ["RAZORPAY_KEY_ID"] = "rzp_test_dummy"      # fake keys: checkout tests never call Razorpay
+os.environ["RAZORPAY_KEY_SECRET"] = "dummy_secret"
+for _k in ("PAYMENT_MODE", "STRIPE_SECRET_KEY", "ALLOW_DEMO"):
+    os.environ.pop(_k, None)
 os.environ["UPSTASH_REDIS_REST_URL"] = ""
 os.environ["UPSTASH_REDIS_REST_TOKEN"] = ""
 
@@ -25,6 +32,7 @@ appmod.DB = {"registrations": [], "payments": []}
 appmod.send_ticket_email = lambda *a, **k: False
 
 client = appmod.app.test_client()
+appmod._hit = lambda *a, **k: 0  # rate limiting is covered in security_test.py
 
 
 def register(email, name="Test User", persons=2):
